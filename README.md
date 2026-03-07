@@ -237,8 +237,8 @@ oculos [OPTIONS]
 | **Scope** | Any desktop app | Any (with latency) | Any (fragile) | Browser only |
 | **Speed** | Instant | Seconds | Instant | Instant |
 | **Deterministic** | ✅ | ❌ | ✅ | ✅ |
-| **GPU required** | ❌ | ✅ | ❌ | ❌ |
-| **Cloud required** | ❌ | Usually | ❌ | ❌ |
+| **No GPU required** | ✅ | ❌ | ✅ | ✅ |
+| **No cloud required** | ✅ | Sometimes | ✅ | ✅ |
 | **Semantic** | ✅ Labels + types | Varies | ❌ Coordinates | ✅ |
 
 ---
