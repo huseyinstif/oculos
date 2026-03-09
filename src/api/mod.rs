@@ -2,9 +2,11 @@ pub mod interact;
 pub mod windows;
 pub mod ws;
 
+use crate::auth::{self, ApiKey};
 use crate::platform::UiBackend;
 use crate::types::ApiResponse;
 use axum::{
+    middleware,
     routing::{get, post},
     Json, Router,
 };
@@ -21,9 +23,11 @@ pub struct AppState {
     pub ws_tx: ws::WsBroadcast,
 }
 
-pub fn router(state: AppState) -> Router {
+pub fn router(state: AppState, api_key: String) -> Router {
     // Touch the lazy so uptime starts counting from server boot.
     Lazy::force(&START_TIME);
+
+    let key_ext = ApiKey(api_key);
 
     Router::new()
         // ── Discovery ──────────────────────────────────────────────────────
@@ -62,6 +66,9 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         // ── WebSocket ─────────────────────────────────────────────────────
         .route("/ws", get(ws::ws_handler))
+        // ── Auth middleware (applies to all routes above) ─────────────────
+        .layer(middleware::from_fn(auth::auth_middleware))
+        .layer(axum::Extension(key_ext))
         .with_state(state)
 }
 

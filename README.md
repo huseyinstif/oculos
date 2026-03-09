@@ -104,19 +104,19 @@ OculOS reads the OS accessibility tree and assigns each UI element a session-sco
 
 ```bash
 # 1. List open windows
-curl http://localhost:7878/windows
+curl -H "Authorization: Bearer $OCULOS_API_KEY" http://localhost:7878/windows
 
 # 2. Get the UI tree for a window
-curl http://localhost:7878/windows/{pid}/tree
+curl -H "Authorization: Bearer $OCULOS_API_KEY" http://localhost:7878/windows/{pid}/tree
 
 # 3. Find a specific element
-curl "http://localhost:7878/windows/{pid}/find?q=Submit&type=Button"
+curl -H "Authorization: Bearer $OCULOS_API_KEY" "http://localhost:7878/windows/{pid}/find?q=Submit&type=Button"
 
 # 4. Click it
-curl -X POST http://localhost:7878/interact/{id}/click
+curl -H "Authorization: Bearer $OCULOS_API_KEY" -X POST http://localhost:7878/interact/{id}/click
 
 # 5. Type into a text field
-curl -X POST http://localhost:7878/interact/{id}/set-text \
+curl -H "Authorization: Bearer $OCULOS_API_KEY" -X POST http://localhost:7878/interact/{id}/set-text \
   -H "Content-Type: application/json" \
   -d '{"text":"hello world"}'
 ```
@@ -137,6 +137,8 @@ Every element includes an `actions` array — the API tells you exactly what you
 ---
 
 ## API
+
+> All endpoints require authentication. Include `Authorization: Bearer <KEY>` header with every request.
 
 ### Discovery
 
@@ -293,8 +295,60 @@ oculos [OPTIONS]
       --static-dir <DIR>  Static files directory [default: static]
       --log <LEVEL>       Log level: trace/debug/info/warn/error [default: info]
       --mcp               Run as MCP server over stdin/stdout
+      --api-key <KEY>     API key for HTTP auth [env: OCULOS_API_KEY]
   -h, --help              Print help
 ```
+
+---
+
+## Authentication
+
+All HTTP API endpoints, WebSocket connections, and the Dashboard require a Bearer token.
+
+### How it works
+
+- On startup, if no key is provided, OculOS generates a random one and prints it:
+  ```
+  [OculOS] No API key provided. Generated key: oculos_a1b2c3...
+  [OculOS] Pass it with --api-key or set OCULOS_API_KEY env variable.
+  ```
+- You can provide your own key via CLI or environment variable:
+  ```bash
+  # CLI flag
+  oculos --api-key "my-secret-key"
+
+  # Environment variable
+  export OCULOS_API_KEY="my-secret-key"
+  oculos
+  ```
+
+### Using the API with auth
+
+Pass the key in the `Authorization` header:
+
+```bash
+# List windows
+curl -H "Authorization: Bearer oculos_a1b2c3..." http://localhost:7878/windows
+
+# Get UI tree
+curl -H "Authorization: Bearer oculos_a1b2c3..." http://localhost:7878/windows/1234/tree
+
+# Click an element
+curl -X POST -H "Authorization: Bearer oculos_a1b2c3..." \
+     http://localhost:7878/interact/<element-id>/click
+```
+
+### Dashboard
+
+The web dashboard prompts for the API key on first visit. The key is saved in `localStorage` for the session. If the key becomes invalid (401 response), the login screen reappears.
+
+### WebSocket
+
+Browser WebSocket API cannot send custom headers. The dashboard passes the token via query parameter: `ws://host/ws?token=<KEY>`. The `Authorization: Bearer` header also works for non-browser clients.
+
+### MCP mode
+
+MCP runs over stdin/stdout and does not use HTTP, so no API key is required in `--mcp` mode.
 
 ---
 
