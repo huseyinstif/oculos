@@ -50,6 +50,9 @@ clap = { version = "4", features = ["derive"] }
 # Lazy statics
 once_cell = "1"
 
+# Random key generation
+rand = "0.8"
+
 # Image encoding (PNG screenshots)
 image = "0.25"
 

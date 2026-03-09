@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod mcp;
 mod platform;
 mod types;
@@ -39,6 +40,11 @@ struct Args {
     /// Add this binary to your MCP host config (Claude, Cursor, Windsurf…).
     #[arg(long)]
     mcp: bool,
+
+    /// API key for authenticating HTTP requests. If not provided, a random key
+    /// is generated at startup. Can also be set via OCULOS_API_KEY env variable.
+    #[arg(long, env = "OCULOS_API_KEY")]
+    api_key: Option<String>,
 }
 
 #[tokio::main]
@@ -67,6 +73,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // ── API key ───────────────────────────────────────────────────────────────
+    let api_key = auth::resolve_api_key(args.api_key);
+
     let ws_tx = api::ws::create_broadcast();
     let state = AppState { backend, ws_tx };
 
@@ -77,12 +86,12 @@ async fn main() -> Result<()> {
         .allow_headers(Any);
 
     // ── Router ────────────────────────────────────────────────────────────────
-    let api_routes = api::router(state);
+    let api_routes = api::router(state, api_key.clone());
 
     let app = Router::new()
         // API routes under /api namespace (also available at root for simplicity)
         .merge(api_routes)
-        // Dashboard — served at /
+        // Dashboard — served at / (no auth required for static files)
         .nest_service("/", ServeDir::new(&args.static_dir))
         .layer(cors)
         .layer(TraceLayer::new_for_http());

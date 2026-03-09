@@ -37,7 +37,9 @@ pub fn create_broadcast() -> WsBroadcast {
     Arc::new(tx)
 }
 
-/// GET /ws — upgrade to WebSocket
+/// GET /ws — upgrade to WebSocket.
+/// Auth is handled by the auth middleware layer (supports both
+/// `Authorization: Bearer` header and `?token=` query parameter).
 pub async fn ws_handler(ws: WebSocketUpgrade, State(s): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, s))
 }

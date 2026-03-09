@@ -146,6 +146,17 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 .loading{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* ── login overlay ── */
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:1000;display:none;align-items:center;justify-content:center}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:32px;width:360px;text-align:center}
+.login-box h2{font:600 18px var(--sans);color:var(--text);margin-bottom:4px}
+.login-box p{font:13px var(--sans);color:var(--text-3);margin-bottom:20px}
+.login-box input{width:100%;height:36px;background:var(--raised);border:1px solid var(--border);border-radius:4px;padding:0 12px;font:13px var(--mono);color:var(--text);outline:none;margin-bottom:12px}
+.login-box input:focus{border-color:var(--blue)}
+.login-box button{width:100%;height:36px;background:var(--blue);border:none;border-radius:4px;font:500 13px var(--sans);color:#fff;cursor:pointer}
+.login-box button:hover{background:#5a96ff}
+.login-err{color:var(--red);font-size:12px;margin-bottom:8px;display:none}
+
 /* ── toast ── */
 .toast-wrap{position:fixed;bottom:16px;right:16px;display:flex;flex-direction:column;gap:6px;z-index:999;pointer-events:none}
 .toast{padding:8px 14px;border-radius:var(--radius);font:12px var(--sans);color:var(--text);background:var(--raised);border:1px solid var(--border);box-shadow:0 4px 16px rgba(0,0,0,.4);opacity:0;transform:translateY(8px);animation:toast-in .2s forwards}
@@ -187,6 +198,17 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 </style>
 </head>
 <body>
+
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>OculOS</h2>
+    <p>Enter your API key to access the dashboard.</p>
+    <div class="login-err" id="loginErr">Invalid API key. Please try again.</div>
+    <input type="password" id="loginKey" placeholder="oculos_..." autofocus
+           onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button onclick="doLogin()">Authenticate</button>
+  </div>
+</div>
 
 <div class="topbar">
   <svg width="18" height="18" viewBox="0 0 256 256" fill="none" style="vertical-align:middle;margin-right:6px"><g stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"><path d="M44 128 C72 90 104 72 128 72 C152 72 184 90 212 128 C184 166 152 184 128 184 C104 184 72 166 44 128 Z"/><path d="M92 104 L76 128 L92 152"/><path d="M164 104 L180 128 L164 152"/><circle cx="128" cy="128" r="10" fill="currentColor" stroke="none"/></g></svg><span class="topbar-brand">OculOS</span>
@@ -288,6 +310,33 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 <script>
 const API='';
 let selWin=null,selElem=null,logN=0,allElements=[],nodeTotal=0;
+let apiKey=localStorage.getItem('oculos_api_key')||'';
+
+// ── auth ──
+function getAuthHeaders(){return {'Content-Type':'application/json','Authorization':'Bearer '+apiKey}}
+function showLogin(){document.getElementById('loginOverlay').style.display='flex'}
+function hideLogin(){document.getElementById('loginOverlay').style.display='none'}
+// Show login immediately if no stored key (avoids flash of empty dashboard)
+if(!apiKey)showLogin();
+async function doLogin(){
+  const k=document.getElementById('loginKey').value.trim();
+  if(!k){document.getElementById('loginErr').textContent='Please enter an API key.';document.getElementById('loginErr').style.display='block';return}
+  try{
+    const r=await fetch(API+'/health',{headers:{'Authorization':'Bearer '+k}});
+    if(r.status===401){document.getElementById('loginErr').textContent='Invalid API key. Please try again.';document.getElementById('loginErr').style.display='block';return}
+    apiKey=k;localStorage.setItem('oculos_api_key',k);
+    document.getElementById('loginErr').style.display='none';
+    hideLogin();initApp();
+  }catch(e){document.getElementById('loginErr').textContent='Server unreachable. Is OculOS running?';document.getElementById('loginErr').style.display='block'}
+}
+async function checkAuth(){
+  if(!apiKey){showLogin();return}
+  try{
+    const r=await fetch(API+'/health',{headers:{'Authorization':'Bearer '+apiKey}});
+    if(r.status===401){apiKey='';localStorage.removeItem('oculos_api_key');resetApp();showLogin();return}
+    hideLogin();initApp();
+  }catch(e){document.getElementById('loginErr').textContent='Server unreachable. Is OculOS running?';document.getElementById('loginErr').style.display='block';showLogin()}
+}
 
 // ── toast ──
 function toast(msg,type='ok'){
@@ -306,9 +355,11 @@ function switchTab(id,el){
 async function api(method,path,body){
   const t0=Date.now();
   try{
-    const opts={method,headers:{'Content-Type':'application/json'}};
+    const opts={method,headers:getAuthHeaders()};
     if(body)opts.body=JSON.stringify(body);
-    const r=await fetch(API+path,opts),d=await r.json();
+    const r=await fetch(API+path,opts);
+    if(r.status===401){apiKey='';localStorage.removeItem('oculos_api_key');resetApp();showLogin();throw new Error('Unauthorized')}
+    const d=await r.json();
     addLog(method,path,r.ok?'ok':'err',Date.now()-t0);
     return d;
   }catch(e){addLog(method,path,'err',Date.now()-t0);throw e}
@@ -606,24 +657,24 @@ function exportAs(lang){
   let code='';
   const base='http://127.0.0.1:7878';
   if(lang==='python'){
-    code='import requests\n\n';
+    code='import requests\n\nHEADERS = {"Authorization": "Bearer YOUR_API_KEY"}\n\n';
     recSteps.forEach((s,i)=>{
       const url=`${base}/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}", json=${JSON.stringify(s.body).replace(/"/g,"'")})\n\n`;
-      else code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}")\n\n`;
+      if(s.body)code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}", json=${JSON.stringify(s.body).replace(/"/g,"'")}, headers=HEADERS)\n\n`;
+      else code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}", headers=HEADERS)\n\n`;
     });
   } else if(lang==='javascript'){
-    code='const API = "http://127.0.0.1:7878";\n\n';
+    code='const API = "http://127.0.0.1:7878";\nconst HEADERS = {"Content-Type":"application/json","Authorization":"Bearer YOUR_API_KEY"};\n\n';
     recSteps.forEach((s,i)=>{
       const path=`/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(${JSON.stringify(s.body)}) });\n\n`;
-      else code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST" });\n\n`;
+      if(s.body)code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST", headers: HEADERS, body: JSON.stringify(${JSON.stringify(s.body)}) });\n\n`;
+      else code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST", headers: HEADERS });\n\n`;
     });
   } else if(lang==='curl'){
     recSteps.forEach((s,i)=>{
       const url=`${base}/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST -H "Content-Type: application/json" -d '${JSON.stringify(s.body)}' "${url}"\n\n`;
-      else code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST "${url}"\n\n`;
+      if(s.body)code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d '${JSON.stringify(s.body)}' "${url}"\n\n`;
+      else code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST -H "Authorization: Bearer YOUR_API_KEY" "${url}"\n\n`;
     });
   }
   navigator.clipboard.writeText(code).then(()=>toast(`${lang} script copied (${recSteps.length} steps)`)).catch(()=>{
@@ -632,18 +683,15 @@ function exportAs(lang){
 }
 
 // patch doAction to record
-const _origDoAction=doAction;
 doAction=async function(action,id){
   try{const d=await api('POST',`/interact/${id}/${action}`);if(!d.success)throw new Error(d.error);recAdd(action,id);toast(`${action} OK`)}
   catch(e){toast(`${action}: ${e.message}`,'err')}
 };
-const _origDoSetText=doSetText;
 doSetText=async function(id){
   const v=document.getElementById('txtIn')?.value;if(v==null)return;
   try{const d=await api('POST',`/interact/${id}/set-text`,{text:v});if(!d.success)throw new Error(d.error);recAdd('set-text',id,{text:v});toast('Text set')}
   catch(e){toast('Set text: '+e.message,'err')}
 };
-const _origDoSendKeys=doSendKeys;
 doSendKeys=async function(id){
   const v=document.getElementById('keysIn')?.value;if(!v)return;
   try{const d=await api('POST',`/interact/${id}/send-keys`,{keys:v});if(!d.success)throw new Error(d.error);recAdd('send-keys',id,{keys:v});toast('Keys sent')}
@@ -653,7 +701,8 @@ doSendKeys=async function(id){
 // ── health / uptime ──
 async function fetchHealth(){
   try{
-    const r=await fetch('/health');
+    const r=await fetch('/health',{headers:{'Authorization':'Bearer '+apiKey}});
+    if(r.status===401)return;
     const d=await r.json();
     if(d.success&&d.data){
       const s=d.data.uptime_secs;
@@ -671,8 +720,9 @@ async function fetchHealth(){
 // ── WebSocket ──
 let ws=null,wsRetry=0;
 function connectWs(){
+  if(!apiKey)return;
   const proto=location.protocol==='https:'?'wss:':'ws:';
-  ws=new WebSocket(`${proto}//${location.host}/ws`);
+  ws=new WebSocket(`${proto}//${location.host}/ws?token=${encodeURIComponent(apiKey)}`);
   ws.onopen=()=>{
     wsRetry=0;
     document.getElementById('wsDot').className='ws-dot on';
@@ -710,11 +760,19 @@ document.addEventListener('keydown',e=>{
 });
 
 // ── init ──
-loadWindows();
-fetchHealth();
-connectWs();
-setInterval(()=>{if(!document.hidden)loadWindows()},10000);
-setInterval(fetchHealth,5000);
+let _initDone=false,_ivWin=0,_ivHealth=0;
+function initApp(){
+  if(_initDone)return;_initDone=true;
+  loadWindows();fetchHealth();connectWs();
+  _ivWin=setInterval(()=>{if(!document.hidden)loadWindows()},10000);
+  _ivHealth=setInterval(fetchHealth,5000);
+}
+function resetApp(){
+  _initDone=false;
+  clearInterval(_ivWin);clearInterval(_ivHealth);
+  if(ws){ws.close();ws=null}
+}
+checkAuth();
 </script>
 </body>
 </html>
