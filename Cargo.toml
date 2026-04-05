@@ -75,8 +75,8 @@ core-graphics = { version = "0.23", features = ["highsierra"] }
 objc2 = "0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-atspi = { version = "0.19", features = ["async-std"] }
-zbus = "3"
+atspi = { version = "0.19", features = ["tokio"] }
+zbus = { version = "3", default-features = false, features = ["tokio"] }
 
 [profile.release]
 opt-level = 3

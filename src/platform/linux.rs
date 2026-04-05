@@ -47,30 +47,61 @@ pub struct LinuxUiBackend {
 
 impl LinuxUiBackend {
     pub fn new() -> Result<Self> {
-        // Build the runtime + D-Bus connection on a *dedicated OS thread* so
-        // we never hit "cannot start a runtime from within a runtime" when the
-        // caller is already inside #[tokio::main].
         let handle = std::thread::spawn(|| -> Result<(tokio::runtime::Runtime, Connection)> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .context("Failed to create dedicated Tokio runtime for AT-SPI2")?;
-
+    
             let connection = rt.block_on(async {
-                Connection::session()
+                let session = Connection::session()
                     .await
-                    .context("Failed to connect to D-Bus session bus. Is AT-SPI2 running?")
+                    .context("Failed to connect to D-Bus session bus")?;
+    
+                let atspi_address: String = session
+                    .call_method(
+                        Some("org.a11y.Bus"),
+                        "/org/a11y/bus",
+                        Some("org.a11y.Bus"),
+                        "GetAddress",
+                        &(),
+                    )
+                    .await
+                    .context("Failed to get AT-SPI bus address from org.a11y.Bus")?
+                    .body()
+                    .deserialize()
+                    .context("Failed to deserialize AT-SPI bus address")?;
+    
+                tracing::info!("Connecting to AT-SPI2 bus at {}", atspi_address);
+    
+                zbus::ConnectionBuilder::address(atspi_address.as_str())?
+                    .build()
+                    .await
+                    .context("Failed to connect to AT-SPI2 accessibility bus")
             })?;
-
+    
             Ok((rt, connection))
         });
-
+    
         let (rt, connection) = handle
             .join()
             .map_err(|_| anyhow!("AT-SPI2 init thread panicked"))??;
-
-        tracing::info!("Connected to D-Bus session bus for AT-SPI2");
-
+    
+        tracing::info!("Connected to AT-SPI2 accessibility bus");
+    
+        Ok(Self {
+            connection,
+            registry: Arc::new(DashMap::new()),
+            rt,
+        })
+    }
+    
+        let (rt, connection) = handle
+            .join()
+            .map_err(|_| anyhow!("AT-SPI2 init thread panicked"))??;
+    
+        tracing::info!("Connected to AT-SPI2 accessibility bus");
+    
         Ok(Self {
             connection,
             registry: Arc::new(DashMap::new()),
