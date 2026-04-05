@@ -609,88 +609,108 @@ impl LinuxUiBackend {
 impl UiBackend for LinuxUiBackend {
     fn list_windows(&self) -> Result<Vec<WindowInfo>> {
         self.block_on(async {
-            let registry = Self::make_accessible_proxy(
-                &self.connection,
-                "org.a11y.atspi.Registry",
-                "/org/a11y/atspi/accessible/root",
-            )
-            .await
-            .context("Failed to connect to AT-SPI2 registry")?;
-
-            let child_count = registry.child_count().await.unwrap_or(0);
-            tracing::info!("Registry child_count: {}", child_count); 
-
+            // Use GetChildren directly — child_count() property returns 0 on this atspi version
+            let children: Vec<(String, zbus::zvariant::OwnedObjectPath)> = self
+                .connection
+                .call_method(
+                    Some("org.a11y.atspi.Registry"),
+                    "/org/a11y/atspi/accessible/root",
+                    Some("org.a11y.atspi.Accessible"),
+                    "GetChildren",
+                    &(),
+                )
+                .await
+                .context("Failed to call GetChildren on AT-SPI registry")?
+                .body::<Vec<(String, zbus::zvariant::OwnedObjectPath)>>()
+                .context("Failed to deserialize children")?;
+    
+            tracing::info!("Registry GetChildren returned {} children", children.len());
+    
             let mut windows = Vec::new();
-
-            for i in 0..child_count {
-                if let Ok(child) = registry.get_child_at_index(i).await {
-                    let cb = child.name.clone();
-                    let cp = child.path.to_string();
-
-                    if let Ok(app_proxy) =
-                        Self::make_accessible_proxy(&self.connection, &cb, &cp).await
+    
+            for (cb, cp) in &children {
+                let cp_str = cp.as_str();
+    
+                // Get app name
+                let app_proxy = match Self::make_accessible_proxy(&self.connection, cb, cp_str).await {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+    
+                let app_name = app_proxy.name().await.unwrap_or_default();
+                if app_name.is_empty() {
+                    continue;
+                }
+    
+                // Get PID via Application interface
+                let pid = if let Ok(ap) =
+                    Self::make_application_proxy(&self.connection, cb, cp_str).await
+                {
+                    ap.id().await.unwrap_or(0) as u32
+                } else {
+                    0
+                };
+    
+                // Get children of this app (its windows)
+                let app_children: Vec<(String, zbus::zvariant::OwnedObjectPath)> = match self
+                    .connection
+                    .call_method(
+                        Some(cb.as_str()),
+                        cp_str,
+                        Some("org.a11y.atspi.Accessible"),
+                        "GetChildren",
+                        &(),
+                    )
+                    .await
+                    .and_then(|r| r.body::<Vec<(String, zbus::zvariant::OwnedObjectPath)>>().map_err(Into::into))
+                {
+                    Ok(c) => c,
+                    Err(_) => vec![],
+                };
+    
+                let mut found_window = false;
+    
+                for (wb, wp) in &app_children {
+                    let wp_str = wp.as_str();
+    
+                    if let Ok(win_proxy) =
+                        Self::make_accessible_proxy(&self.connection, wb, wp_str).await
                     {
-                        let app_name = app_proxy.name().await.unwrap_or_default();
-                        if app_name.is_empty() {
-                            continue;
-                        }
-
-                        let pid = if let Ok(ap) =
-                            Self::make_application_proxy(&self.connection, &cb, &cp).await
-                        {
-                            ap.id().await.unwrap_or(0) as u32
-                        } else {
-                            0
-                        };
-
-                        let app_child_count = app_proxy.child_count().await.unwrap_or(0);
-                        let mut found_window = false;
-
-                        for j in 0..app_child_count {
-                            if let Ok(win) = app_proxy.get_child_at_index(j).await {
-                                let wb = win.name.clone();
-                                let wp = win.path.to_string();
-
-                                if let Ok(win_proxy) =
-                                    Self::make_accessible_proxy(&self.connection, &wb, &wp).await
-                                {
-                                    let role = win_proxy.get_role().await.unwrap_or(Role::Invalid);
-                                    if matches!(role, Role::Frame | Role::Window | Role::Dialog) {
-                                        let title = win_proxy.name().await.unwrap_or_default();
-                                        let rect = self.get_component_rect(&wb, &wp).await;
-                                        windows.push(WindowInfo {
-                                            pid,
-                                            hwnd: 0,
-                                            title,
-                                            exe_name: app_name.clone(),
-                                            rect,
-                                            visible: true,
-                                        });
-                                        found_window = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        if !found_window && pid > 0 {
+                        let role = win_proxy.get_role().await.unwrap_or(Role::Invalid);
+                        if matches!(role, Role::Frame | Role::Window | Role::Dialog) {
+                            let title = win_proxy.name().await.unwrap_or_default();
+                            let rect = self.get_component_rect(wb, wp_str).await;
                             windows.push(WindowInfo {
                                 pid,
                                 hwnd: 0,
-                                title: app_name.clone(),
-                                exe_name: app_name,
-                                rect: Rect {
-                                    x: 0,
-                                    y: 0,
-                                    width: 0,
-                                    height: 0,
-                                },
+                                title,
+                                exe_name: app_name.clone(),
+                                rect,
                                 visible: true,
                             });
+                            found_window = true;
                         }
                     }
                 }
+    
+                // Fallback: if no Frame/Window child found, register the app itself
+                if !found_window && pid > 0 {
+                    windows.push(WindowInfo {
+                        pid,
+                        hwnd: 0,
+                        title: app_name.clone(),
+                        exe_name: app_name,
+                        rect: Rect {
+                            x: 0,
+                            y: 0,
+                            width: 0,
+                            height: 0,
+                        },
+                        visible: true,
+                    });
+                }
             }
-
+    
             Ok(windows)
         })
     }
