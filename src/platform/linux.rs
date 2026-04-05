@@ -607,6 +607,8 @@ impl UiBackend for LinuxUiBackend {
             .context("Failed to connect to AT-SPI2 registry")?;
 
             let child_count = registry.child_count().await.unwrap_or(0);
+            tracing::info!("Registry child_count: {}", child_count); 
+            
             let mut windows = Vec::new();
 
             for i in 0..child_count {
