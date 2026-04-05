@@ -643,25 +643,25 @@ impl UiBackend for LinuxUiBackend {
                 }
     
                 // Get PID via Application interface
-                let pid = self
-                .connection
-                .call_method(
-                    Some(cb.as_str()),
-                    cp_str,
-                    Some("org.freedesktop.DBus.Properties"),
-                    "Get",
-                    &("org.a11y.atspi.Application", "Id"),
-                )
-                .await
-                .ok()
-                .and_then(|r| r.body::<zbus::zvariant::Value>().ok())
-                .and_then(|v| match v {
-                    zbus::zvariant::Value::I32(n) => Some(n as u32),
-                    zbus::zvariant::Value::U32(n) => Some(n),
-                    zbus::zvariant::Value::I64(n) => Some(n as u32),
-                    _ => None,
-                })
-                .unwrap_or(0);
+                let pid = async {
+                    let msg = self.connection
+                        .call_method(
+                            Some(cb.as_str()),
+                            cp_str,
+                            Some("org.freedesktop.DBus.Properties"),
+                            "Get",
+                            &("org.a11y.atspi.Application", "Id"),
+                        )
+                        .await
+                        .ok()?;
+                    let v = msg.body::<zbus::zvariant::Value>().ok()?;
+                    match v {
+                        zbus::zvariant::Value::I32(n) => Some(n as u32),
+                        zbus::zvariant::Value::U32(n) => Some(n),
+                        zbus::zvariant::Value::I64(n) => Some(n as u32),
+                        _ => None,
+                    }
+                }.await.unwrap_or(0);
     
                 // Get children of this app (its windows)
                 let app_children: Vec<(String, zbus::zvariant::OwnedObjectPath)> = match self
