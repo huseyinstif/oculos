@@ -654,8 +654,14 @@ impl UiBackend for LinuxUiBackend {
                 )
                 .await
                 .ok()
-                .and_then(|r| r.body::<i32>().ok())
-                .unwrap_or(0) as u32;
+                .and_then(|r| r.body::<zbus::zvariant::Value>().ok())
+                .and_then(|v| match v {
+                    zbus::zvariant::Value::I32(n) => Some(n as u32),
+                    zbus::zvariant::Value::U32(n) => Some(n),
+                    zbus::zvariant::Value::I64(n) => Some(n as u32),
+                    _ => None,
+                })
+                .unwrap_or(0);
     
                 // Get children of this app (its windows)
                 let app_children: Vec<(String, zbus::zvariant::OwnedObjectPath)> = match self
