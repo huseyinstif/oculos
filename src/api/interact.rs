@@ -1,378 +1,173 @@
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde_json::{json, Value};
-use tokio::task;
 
 use crate::{
-    api::{ws::WsEvent, AppState},
-    types::{
-        ApiResponse, HighlightPayload, ScrollPayload, SendKeysPayload, SetRangePayload,
-        SetTextPayload,
+    api::{
+        ok, windows::png_response, ws::WsEvent, ApiError, ApiJson, ApiPath, ApiResult, AppState,
     },
+    ops::{self, Action, BatchRequest, BatchResult},
+    types::{HighlightPayload, ScrollPayload, SendKeysPayload, SetRangePayload, SetTextPayload},
 };
 
-// ── Basic interactions ────────────────────────────────────────────────────────
-
-/// POST /interact/:id/click
-pub async fn click(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
+/// Run one action on the blocking pool, broadcast the outcome, and answer with
+/// `{ "action": name, ...extra }`.
+async fn act(state: AppState, id: String, action: Action, extra: Value) -> ApiResult<Value> {
+    let name = action.name();
     let id2 = id.clone();
-    task::spawn_blocking(move || b.click_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "click".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "click" }))))
+    let res = state
+        .blocking(move |b| ops::perform(b, &id2, &action))
+        .await;
+    state.emit(WsEvent::action(
+        name,
+        &id,
+        &res.as_ref().map(|_| ()).map_err(|e| e.message.clone()),
+    ));
+    res?;
+
+    let mut body = json!({ "action": name });
+    if let (Some(obj), Value::Object(extra)) = (body.as_object_mut(), extra) {
+        obj.extend(extra);
+    }
+    ok(body)
 }
+
+// ── Simple actions (no body) ─────────────────────────────────────────────────
+
+macro_rules! simple_action {
+    ($(#[$doc:meta])* $name:ident => $action:expr) => {
+        $(#[$doc])*
+        pub async fn $name(
+            State(s): State<AppState>,
+            ApiPath(id): ApiPath<String>,
+        ) -> ApiResult<Value> {
+            act(s, id, $action, Value::Null).await
+        }
+    };
+}
+
+simple_action!(
+    /// POST /interact/:id/click
+    click => Action::Click
+);
+simple_action!(
+    /// POST /interact/:id/focus
+    focus => Action::Focus
+);
+simple_action!(
+    /// POST /interact/:id/toggle
+    toggle => Action::Toggle
+);
+simple_action!(
+    /// POST /interact/:id/expand
+    expand => Action::Expand
+);
+simple_action!(
+    /// POST /interact/:id/collapse
+    collapse => Action::Collapse
+);
+simple_action!(
+    /// POST /interact/:id/select
+    select => Action::Select
+);
+simple_action!(
+    /// POST /interact/:id/scroll-into-view
+    scroll_into_view => Action::ScrollIntoView
+);
+
+// ── Actions with a body ──────────────────────────────────────────────────────
 
 /// POST /interact/:id/set-text  body: { "text": "..." }
 pub async fn set_text(
     State(s): State<AppState>,
-    Path(id): Path<String>,
-    Json(p): Json<SetTextPayload>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.set_text(&id2, &p.text))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "set-text".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "set-text" }))))
+    ApiPath(id): ApiPath<String>,
+    ApiJson(p): ApiJson<SetTextPayload>,
+) -> ApiResult<Value> {
+    act(s, id, Action::SetText(p.text), Value::Null).await
 }
 
-/// POST /interact/:id/send-keys  body: { "keys": "Hello World" }
+/// POST /interact/:id/send-keys  body: { "keys": "Hello{ENTER}" }
+///
+/// The key sequence is validated before anything is typed.
 pub async fn send_keys(
     State(s): State<AppState>,
-    Path(id): Path<String>,
-    Json(p): Json<SendKeysPayload>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.send_keys(&id2, &p.keys))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "send-keys".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "send-keys" }))))
-}
-
-/// POST /interact/:id/focus
-pub async fn focus(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.focus_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "focus".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "focus" }))))
-}
-
-// ── Pattern-specific interactions ─────────────────────────────────────────────
-
-/// POST /interact/:id/toggle
-pub async fn toggle(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.toggle_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "toggle".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "toggle" }))))
-}
-
-/// POST /interact/:id/expand
-pub async fn expand(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.expand_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "expand".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "expand" }))))
-}
-
-/// POST /interact/:id/collapse
-pub async fn collapse(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.collapse_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "collapse".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "collapse" }))))
-}
-
-/// POST /interact/:id/select
-pub async fn select(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let id2 = id.clone();
-    task::spawn_blocking(move || b.select_element(&id2))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    let _ = s.ws_tx.send(WsEvent::Action {
-        action: "select".into(),
-        element_id: id,
-        success: true,
-    });
-    Ok(Json(ApiResponse::ok(json!({ "action": "select" }))))
+    ApiPath(id): ApiPath<String>,
+    ApiJson(p): ApiJson<SendKeysPayload>,
+) -> ApiResult<Value> {
+    let action = Action::send_keys(&p.keys)?;
+    act(s, id, action, Value::Null).await
 }
 
 /// POST /interact/:id/set-range  body: { "value": 42.0 }
 pub async fn set_range(
     State(s): State<AppState>,
-    Path(id): Path<String>,
-    Json(p): Json<SetRangePayload>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    task::spawn_blocking(move || b.set_range(&id, p.value))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    Ok(Json(ApiResponse::ok(
-        json!({ "action": "set-range", "value": p.value }),
-    )))
+    ApiPath(id): ApiPath<String>,
+    ApiJson(p): ApiJson<SetRangePayload>,
+) -> ApiResult<Value> {
+    let action = Action::set_range(p.value)?;
+    act(s, id, action, json!({ "value": p.value })).await
 }
 
 /// POST /interact/:id/scroll  body: { "direction": "down" }
 pub async fn scroll(
     State(s): State<AppState>,
-    Path(id): Path<String>,
-    Json(p): Json<ScrollPayload>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    let dir = p.direction.clone();
-    task::spawn_blocking(move || b.scroll_element(&id, &dir))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    Ok(Json(ApiResponse::ok(
-        json!({ "action": "scroll", "direction": p.direction }),
-    )))
-}
-
-/// POST /interact/:id/scroll-into-view
-pub async fn scroll_into_view(
-    State(s): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
-    let b = s.backend.clone();
-    task::spawn_blocking(move || b.scroll_into_view(&id))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    Ok(Json(ApiResponse::ok(
-        json!({ "action": "scroll-into-view" }),
-    )))
+    ApiPath(id): ApiPath<String>,
+    ApiJson(p): ApiJson<ScrollPayload>,
+) -> ApiResult<Value> {
+    let action = Action::scroll(&p.direction)?;
+    let direction = match &action {
+        Action::Scroll(d) => *d,
+        _ => unreachable!("Action::scroll always builds a Scroll action"),
+    };
+    act(s, id, action, json!({ "direction": direction })).await
 }
 
 /// POST /interact/:id/highlight  body (optional): { "duration_ms": 2000 }
 pub async fn highlight(
     State(s): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
     body: Option<Json<HighlightPayload>>,
-) -> Result<Json<ApiResponse<Value>>, Err> {
+) -> ApiResult<Value> {
     let dur = body.map(|b| b.duration_ms).unwrap_or(2000);
-    let b = s.backend.clone();
-    let rect = task::spawn_blocking(move || b.highlight_element(&id, dur))
-        .await
-        .map_err(e)?
-        .map_err(e)?;
-    Ok(Json(ApiResponse::ok(
-        json!({ "action": "highlight", "rect": { "x": rect.x, "y": rect.y, "width": rect.width, "height": rect.height } }),
-    )))
+    let rect = s.blocking(move |b| b.highlight_element(&id, dur)).await?;
+    ok(json!({ "action": "highlight", "rect": rect }))
+}
+
+/// GET /interact/:id/screenshot — PNG of the element's on-screen area
+pub async fn screenshot_element(
+    State(s): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let png = s.blocking(move |b| b.screenshot_element(&id)).await?;
+    Ok(png_response(png))
 }
 
 // ── Batch operations ──────────────────────────────────────────────────────────
 
 /// POST /interact/batch
 ///
-/// Execute multiple interactions in a single request.
-/// Body: { "actions": [ { "element_id": "...", "action": "click" }, ... ] }
+/// Body: `{ "actions": [ { "element_id": "...", "action": "click" }, ... ],
+///          "stop_on_error": true, "delay_ms": 0 }`
 ///
-/// Each action object:
-///   - element_id: String (required)
-///   - action: "click" | "set-text" | "send-keys" | "focus" | "toggle" | "expand" | "collapse" | "select"
-///   - text: String (for set-text)
-///   - keys: String (for send-keys)
-///   - value: f64 (for set-range)
-///   - direction: String (for scroll)
-#[derive(Debug, serde::Deserialize)]
-pub struct BatchPayload {
-    pub actions: Vec<BatchAction>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct BatchAction {
-    pub element_id: String,
-    pub action: String,
-    pub text: Option<String>,
-    pub keys: Option<String>,
-    pub value: Option<f64>,
-    pub direction: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct BatchResult {
-    pub index: usize,
-    pub action: String,
-    pub element_id: String,
-    pub success: bool,
-    pub error: Option<String>,
-}
-
+/// Every step is validated before anything runs (400 if one is invalid).
+/// Execution stops at the first failure unless `stop_on_error` is false.
 pub async fn batch(
     State(s): State<AppState>,
-    Json(payload): Json<BatchPayload>,
-) -> Json<ApiResponse<Vec<BatchResult>>> {
-    let mut results = Vec::new();
-
-    for (i, act) in payload.actions.iter().enumerate() {
-        let b = s.backend.clone();
-        let eid = act.element_id.clone();
-        let action_name = act.action.clone();
-
-        let res = match act.action.as_str() {
-            "click" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.click_element(&id)).await
-            }
-            "set-text" => {
-                let id = eid.clone();
-                let text = act.text.clone().unwrap_or_default();
-                task::spawn_blocking(move || b.set_text(&id, &text)).await
-            }
-            "send-keys" => {
-                let id = eid.clone();
-                let keys = act.keys.clone().unwrap_or_default();
-                task::spawn_blocking(move || b.send_keys(&id, &keys)).await
-            }
-            "focus" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.focus_element(&id)).await
-            }
-            "toggle" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.toggle_element(&id)).await
-            }
-            "expand" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.expand_element(&id)).await
-            }
-            "collapse" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.collapse_element(&id)).await
-            }
-            "select" => {
-                let id = eid.clone();
-                task::spawn_blocking(move || b.select_element(&id)).await
-            }
-            "set-range" => {
-                let id = eid.clone();
-                let val = act.value.unwrap_or(0.0);
-                task::spawn_blocking(move || b.set_range(&id, val)).await
-            }
-            "scroll" => {
-                let id = eid.clone();
-                let dir = act.direction.clone().unwrap_or_else(|| "down".into());
-                task::spawn_blocking(move || b.scroll_element(&id, &dir)).await
-            }
-            other => {
-                results.push(BatchResult {
-                    index: i,
-                    action: action_name,
-                    element_id: eid,
-                    success: false,
-                    error: Some(format!("Unknown action: {other}")),
-                });
-                continue;
-            }
-        };
-
-        let (success, error) = match res {
-            Ok(Ok(())) => (true, None),
-            Ok(Err(e)) => (false, Some(e.to_string())),
-            Err(e) => (false, Some(e.to_string())),
-        };
-
-        results.push(BatchResult {
-            index: i,
-            action: action_name,
-            element_id: eid,
-            success,
-            error,
-        });
+    ApiJson(req): ApiJson<BatchRequest>,
+) -> ApiResult<Vec<BatchResult>> {
+    let steps = ops::prepare_batch(&req)?;
+    let (stop, delay) = (req.stop_on_error, req.delay_ms);
+    let results = s
+        .blocking(move |b| Ok(ops::run_batch(b, &steps, stop, delay)))
+        .await?;
+    for r in &results {
+        s.emit(WsEvent::action(
+            &r.action,
+            &r.element_id,
+            &match &r.error {
+                Some(e) => Err(e.clone()),
+                None => Ok(()),
+            },
+        ));
     }
-
-    Json(ApiResponse::ok(results))
-}
-
-// ── Helper ────────────────────────────────────────────────────────────────────
-
-type Err = (StatusCode, Json<ApiResponse<()>>);
-
-fn e(err: impl ToString) -> Err {
-    let msg = err.to_string();
-    let status = if msg.contains("not found") {
-        StatusCode::NOT_FOUND
-    } else if msg.contains("not supported") || msg.contains("invalid") {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
-    (status, Json(ApiResponse::err(msg)))
+    ok(results)
 }
