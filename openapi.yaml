@@ -5,7 +5,20 @@ info:
     Universal UI automation API. Control any desktop app through structured JSON.
     OculOS reads the OS accessibility tree and exposes every button, text field,
     checkbox, and menu item as an API endpoint.
-  version: 0.1.0
+
+    **Security.** The server binds to 127.0.0.1 by default. Requests whose `Host`
+    header is not an IP literal, `localhost` or a name allowed with `--allow-host`,
+    and browser requests whose `Origin` is not the server itself or allowed with
+    `--allow-origin`, are rejected with 403 `forbidden`. When a token is configured
+    (`--token` / `OCULOS_TOKEN`, or generated automatically for non-loopback binds)
+    every route except `GET /health` and the dashboard requires it.
+
+    **Element ids** are 16 hex characters and stable: the same element found twice
+    gets the same id. They expire after 30 minutes idle or when the element
+    disappears (404 `not_found` → search again).
+
+    **Errors** use the envelope `{success: false, data: null, error, code}`.
+  version: 0.2.0
   license:
     name: MIT
     url: https://github.com/huseyinstif/oculos/blob/main/LICENSE
@@ -16,11 +29,25 @@ servers:
   - url: http://127.0.0.1:7878
     description: Local OculOS server
 
+# The token is optional: `{}` means "no token" (default loopback setup).
+security:
+  - {}
+  - TokenHeader: []
+  - BearerAuth: []
+
+tags:
+  - name: System
+  - name: Discovery
+  - name: Window Operations
+  - name: Interactions
+
 paths:
   /health:
     get:
       summary: Health check
+      description: Never requires a token. `auth_required` tells clients whether to send one.
       tags: [System]
+      security: []
       responses:
         "200":
           description: Server status
@@ -28,6 +55,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /windows:
     get:
@@ -40,6 +69,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WindowListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/Internal"
 
   /windows/{pid}/tree:
     get:
@@ -54,8 +89,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ElementResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
-          description: Window not found
+          $ref: "#/components/responses/NotFound"
 
   /windows/{pid}/find:
     get:
@@ -63,68 +102,63 @@ paths:
       tags: [Discovery]
       parameters:
         - $ref: "#/components/parameters/pid"
-        - name: q
-          in: query
-          description: Text to match against label or automation_id
-          schema:
-            type: string
-        - name: type
-          in: query
-          description: "Element type filter (Button, Edit, CheckBox, etc.)"
-          schema:
-            type: string
-        - name: interactive
-          in: query
-          description: "Return only elements with actions"
-          schema:
-            type: string
-            enum: ["true", "false"]
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/type"
+        - $ref: "#/components/parameters/interactive"
       responses:
         "200":
-          description: Matching elements
+          description: Matching elements (flat list)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ElementListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /windows/{pid}/wait:
     get:
-      summary: Wait for an element to appear
-      description: Polls every 250ms until a matching element is found or timeout is reached.
+      summary: Wait for elements to appear or disappear
+      description: |
+        Polls every 250 ms until the condition holds or the timeout expires.
+        `until=appears` (default) returns the matching elements as soon as there is
+        at least one; `until=gone` returns an empty list once nothing matches
+        (a window that disappears counts as gone).
       tags: [Discovery]
       parameters:
         - $ref: "#/components/parameters/pid"
-        - name: q
-          in: query
-          schema:
-            type: string
-        - name: type
-          in: query
-          schema:
-            type: string
-        - name: interactive
-          in: query
-          schema:
-            type: string
-        - name: timeout
-          in: query
-          description: Timeout in milliseconds (default 5000, max 30000)
-          schema:
-            type: integer
-            default: 5000
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/type"
+        - $ref: "#/components/parameters/interactive"
+        - $ref: "#/components/parameters/timeout"
+        - $ref: "#/components/parameters/until"
       responses:
         "200":
-          description: Matching elements found
+          description: Condition met
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ElementListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "408":
-          description: Timeout — no matching element found
+          $ref: "#/components/responses/Timeout"
 
   /windows/{pid}/screenshot:
     get:
       summary: Capture window screenshot
+      description: Implemented on Windows; other platforms return 400 `unsupported`.
       tags: [Window Operations]
       parameters:
         - $ref: "#/components/parameters/pid"
@@ -136,8 +170,14 @@ paths:
               schema:
                 type: string
                 format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
-          description: Window not found
+          $ref: "#/components/responses/NotFound"
 
   /windows/{pid}/focus:
     post:
@@ -147,7 +187,15 @@ paths:
         - $ref: "#/components/parameters/pid"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/Internal"
 
   /windows/{pid}/close:
     post:
@@ -157,17 +205,37 @@ paths:
         - $ref: "#/components/parameters/pid"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /hwnd/{hwnd}/tree:
     get:
       summary: UI tree by window handle
+      description: |
+        Use for processes with several windows (same PID, different HWND).
+        Supported on Windows and macOS; on Linux `hwnd` is 0 and HWND routes
+        return 400 `unsupported` (use the PID routes).
       tags: [Discovery]
       parameters:
         - $ref: "#/components/parameters/hwnd"
       responses:
         "200":
           description: Element tree
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElementResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /hwnd/{hwnd}/find:
     get:
@@ -175,21 +243,54 @@ paths:
       tags: [Discovery]
       parameters:
         - $ref: "#/components/parameters/hwnd"
-        - name: q
-          in: query
-          schema:
-            type: string
-        - name: type
-          in: query
-          schema:
-            type: string
-        - name: interactive
-          in: query
-          schema:
-            type: string
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/type"
+        - $ref: "#/components/parameters/interactive"
       responses:
         "200":
           description: Matching elements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElementListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /hwnd/{hwnd}/wait:
+    get:
+      summary: Wait for elements by window handle
+      description: Same as `GET /windows/{pid}/wait`, scoped to one window.
+      tags: [Discovery]
+      parameters:
+        - $ref: "#/components/parameters/hwnd"
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/type"
+        - $ref: "#/components/parameters/interactive"
+        - $ref: "#/components/parameters/timeout"
+        - $ref: "#/components/parameters/until"
+      responses:
+        "200":
+          description: Condition met
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElementListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "408":
+          $ref: "#/components/responses/Timeout"
 
   /interact/{id}/click:
     post:
@@ -199,13 +300,19 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
-          description: Element not found
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/set-text:
     post:
-      summary: Set text content
+      summary: Replace the text content
       tags: [Interactions]
       parameters:
         - $ref: "#/components/parameters/elementId"
@@ -221,7 +328,15 @@ paths:
                   type: string
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/send-keys:
     post:
@@ -239,10 +354,32 @@ paths:
               properties:
                 keys:
                   type: string
-                  description: "Text + special keys like {ENTER}, {CTRL+A}"
+                  description: |
+                    Text plus special keys in braces (case-insensitive):
+                    `{ENTER}` `{TAB}` `{ESC}` `{SPACE}` `{BACKSPACE}` `{DELETE}` `{INSERT}`
+                    `{HOME}` `{END}` `{PGUP}` `{PGDN}` `{UP}` `{DOWN}` `{LEFT}` `{RIGHT}`
+                    `{F1}`–`{F24}` `{CAPSLOCK}` `{PRINTSCREEN}` `{MENU}`;
+                    chords `{CTRL+A}`, `{CTRL+SHIFT+T}`, `{ALT+F4}`, `{WIN+D}`
+                    (modifiers CTRL, ALT/OPTION, SHIFT, WIN/CMD/SUPER/META,
+                    MOD = Cmd on macOS, Ctrl elsewhere); a lone modifier `{WIN}`;
+                    repeat `{TAB 3}` (1–100); literal braces `{{` and `}}`.
+                    `\n` presses Enter, `\t` presses Tab. The whole string is
+                    validated first — invalid syntax → 400 and nothing is typed.
+                  examples:
+                    - "hello world{ENTER}"
+                    - "{CTRL+SHIFT+T}"
+                    - "{TAB 3}{SPACE}"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/focus:
     post:
@@ -252,7 +389,15 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/toggle:
     post:
@@ -262,7 +407,15 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/expand:
     post:
@@ -272,7 +425,15 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/collapse:
     post:
@@ -282,7 +443,15 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/select:
     post:
@@ -292,7 +461,15 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/set-range:
     post:
@@ -312,7 +489,15 @@ paths:
                   type: number
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/scroll:
     post:
@@ -329,11 +514,18 @@ paths:
               required: [direction]
               properties:
                 direction:
-                  type: string
-                  enum: [up, down, left, right, page-up, page-down]
+                  $ref: "#/components/schemas/ScrollDirection"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/scroll-into-view:
     post:
@@ -343,11 +535,20 @@ paths:
         - $ref: "#/components/parameters/elementId"
       responses:
         "200":
-          description: Success
+          $ref: "#/components/responses/Ok"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/{id}/highlight:
     post:
       summary: Highlight element on screen
+      description: Implemented on Windows; other platforms return 400 `unsupported`.
       tags: [Interactions]
       parameters:
         - $ref: "#/components/parameters/elementId"
@@ -362,33 +563,114 @@ paths:
                   default: 2000
       responses:
         "200":
-          description: Success with bounding rect
+          description: Success (data is the element's bounding rect)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /interact/{id}/screenshot:
+    get:
+      summary: Capture one element as PNG
+      description: Implemented on Windows; other platforms return 400 `unsupported`.
+      tags: [Interactions]
+      parameters:
+        - $ref: "#/components/parameters/elementId"
+      responses:
+        "200":
+          description: PNG image
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /interact/batch:
     post:
       summary: Execute multiple interactions in one request
+      description: |
+        Up to 100 actions. Every step is validated before anything runs; if one is
+        invalid the request fails with 400 and nothing is executed. With
+        `stop_on_error` (default true) execution stops at the first failing step.
+        The response contains one result per executed step.
       tags: [Interactions]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BatchPayload"
+              $ref: "#/components/schemas/BatchRequest"
       responses:
         "200":
-          description: Results for each action
+          description: Results for each executed action
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /ws:
     get:
-      summary: WebSocket for live action events
+      summary: WebSocket for live events
+      description: |
+        Upgrade to WebSocket to receive real-time events. When a token is
+        configured, pass it as `?token=<token>` (browsers cannot set headers on
+        WebSocket handshakes). Events:
+        `{"type":"action","data":{action, element_id, success, error?}}`,
+        `{"type":"tree_loaded","data":{pid?, hwnd?, nodes}}`,
+        `{"type":"windows","data":{count}}`.
       tags: [System]
-      description: Upgrade to WebSocket to receive real-time interaction events.
+      security:
+        - {}
+        - TokenQuery: []
+        - TokenHeader: []
+        - BearerAuth: []
+      responses:
+        "101":
+          description: Switching protocols
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
 components:
+  securitySchemes:
+    TokenHeader:
+      type: apiKey
+      in: header
+      name: X-OculOS-Token
+      description: API token (`--token` / `OCULOS_TOKEN`, or the one printed at startup for non-loopback binds).
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: "The same API token as `Authorization: Bearer <token>`."
+    TokenQuery:
+      type: apiKey
+      in: query
+      name: token
+      description: The API token as a query parameter (for WebSocket clients).
+
   parameters:
     pid:
       name: pid
@@ -396,6 +678,7 @@ components:
       required: true
       schema:
         type: integer
+        minimum: 0
       description: Process ID
 
     hwnd:
@@ -404,7 +687,8 @@ components:
       required: true
       schema:
         type: integer
-      description: Window handle
+        minimum: 0
+      description: Window handle from `GET /windows` (Windows HWND, macOS CGWindowID; not available on Linux)
 
     elementId:
       name: id
@@ -412,18 +696,154 @@ components:
       required: true
       schema:
         type: string
-      description: Element oculos_id
+        examples: ["a3f8c2d1e4b5f607"]
+      description: Element `oculos_id` (16 hex characters, stable for the same element)
+
+    q:
+      name: q
+      in: query
+      description: Case-insensitive substring of the element label or automation_id
+      schema:
+        type: string
+
+    type:
+      name: type
+      in: query
+      description: |
+        Element type filter, case-insensitive (see `ElementType`; a few aliases such as
+        `hyperlink`, `textbox` are accepted). Unknown types → 400 `invalid_input`.
+      schema:
+        type: string
+        examples: ["Button", "edit"]
+
+    interactive:
+      name: interactive
+      in: query
+      description: Return only elements that have at least one action
+      schema:
+        type: boolean
+        default: false
+
+    timeout:
+      name: timeout
+      in: query
+      description: How long to wait, in milliseconds (values above 30000 are capped)
+      schema:
+        type: integer
+        default: 5000
+        minimum: 0
+        maximum: 30000
+
+    until:
+      name: until
+      in: query
+      description: "`appears`: wait until something matches; `gone`: wait until nothing matches"
+      schema:
+        type: string
+        enum: [appears, gone]
+        default: appears
+
+  responses:
+    Ok:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiResponse"
+    BadRequest:
+      description: "Invalid input (`invalid_input`) or unsupported operation (`unsupported`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: "Token missing or wrong (`unauthorized`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: "Host/Origin rejected (`forbidden`) or OS permission missing (`permission_denied`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: "Element id unknown/expired or window not found (`not_found`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Timeout:
+      description: "Wait condition not met in time (`timeout`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Internal:
+      description: "Unexpected server error (`internal`)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - not_found
+        - invalid_input
+        - unsupported
+        - timeout
+        - permission_denied
+        - forbidden
+        - unauthorized
+        - internal
+
     ApiResponse:
       type: object
+      required: [success, data, error]
       properties:
         success:
           type: boolean
         data: {}
         error:
+          type: [string, "null"]
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+          description: Present only on errors
+
+    ErrorResponse:
+      type: object
+      required: [success, data, error, code]
+      properties:
+        success:
+          const: false
+        data:
+          type: "null"
+        error:
           type: string
-          nullable: true
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+
+    HealthInfo:
+      type: object
+      properties:
+        status:
+          type: string
+          examples: ["running"]
+        version:
+          type: string
+        platform:
+          type: string
+          enum: [windows, linux, macos]
+        arch:
+          type: string
+        uptime_secs:
+          type: integer
+        auth_required:
+          type: boolean
+          description: True when an API token is required
 
     HealthResponse:
       allOf:
@@ -431,18 +851,7 @@ components:
         - type: object
           properties:
             data:
-              type: object
-              properties:
-                status:
-                  type: string
-                version:
-                  type: string
-                platform:
-                  type: string
-                arch:
-                  type: string
-                uptime_secs:
-                  type: integer
+              $ref: "#/components/schemas/HealthInfo"
 
     Window:
       type: object
@@ -482,57 +891,128 @@ components:
         height:
           type: integer
 
+    ElementType:
+      type: string
+      enum:
+        - Window
+        - Button
+        - SplitButton
+        - Edit
+        - Text
+        - CheckBox
+        - RadioButton
+        - ComboBox
+        - ListBox
+        - ListItem
+        - TreeView
+        - TreeItem
+        - Menu
+        - MenuBar
+        - MenuItem
+        - TabControl
+        - TabItem
+        - ToolBar
+        - StatusBar
+        - ScrollBar
+        - Slider
+        - Spinner
+        - ProgressBar
+        - Image
+        - Link
+        - Group
+        - Pane
+        - Dialog
+        - Document
+        - DataGrid
+        - DataItem
+        - Header
+        - HeaderItem
+        - Table
+        - TitleBar
+        - ToolTip
+        - Separator
+        - Calendar
+        - Thumb
+        - Custom
+        - Unknown
+
+    ElementAction:
+      type: string
+      enum:
+        - click
+        - set-text
+        - send-keys
+        - focus
+        - toggle
+        - expand
+        - collapse
+        - select
+        - set-range
+        - scroll
+        - scroll-into-view
+
+    ScrollDirection:
+      type: string
+      enum: [up, down, left, right, page-up, page-down]
+
     UiElement:
       type: object
       properties:
         oculos_id:
           type: string
+          description: Stable id (16 hex chars); use it in /interact calls
         type:
-          type: string
+          $ref: "#/components/schemas/ElementType"
         label:
           type: string
         value:
-          type: string
-          nullable: true
+          type: [string, "null"]
+        text_content:
+          type: [string, "null"]
         rect:
           $ref: "#/components/schemas/Rect"
         enabled:
           type: boolean
         focused:
           type: boolean
-        toggle_state:
-          type: string
-          nullable: true
-          enum: ["Off", "On", "Indeterminate"]
-        is_selected:
+        is_keyboard_focusable:
           type: boolean
-          nullable: true
+        toggle_state:
+          type: [string, "null"]
+          enum: ["Off", "On", "Indeterminate", null]
+        is_selected:
+          type: [boolean, "null"]
         expand_state:
-          type: string
-          nullable: true
-          enum: ["Collapsed", "Expanded", "PartiallyExpanded", "LeafNode"]
+          type: [string, "null"]
+          enum: ["Collapsed", "Expanded", "PartiallyExpanded", "LeafNode", null]
         range:
-          type: object
-          nullable: true
-          properties:
-            value:
-              type: number
-            minimum:
-              type: number
-            maximum:
-              type: number
-            step:
-              type: number
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                value:
+                  type: number
+                minimum:
+                  type: number
+                maximum:
+                  type: number
+                step:
+                  type: number
+                read_only:
+                  type: boolean
         automation_id:
-          type: string
-          nullable: true
+          type: [string, "null"]
+        class_name:
+          type: [string, "null"]
         help_text:
-          type: string
-          nullable: true
+          type: [string, "null"]
+        keyboard_shortcut:
+          type: [string, "null"]
         actions:
           type: array
+          description: Every action this element supports — only call these
           items:
-            type: string
+            $ref: "#/components/schemas/ElementAction"
         children:
           type: array
           items:
@@ -556,29 +1036,64 @@ components:
               items:
                 $ref: "#/components/schemas/UiElement"
 
-    BatchPayload:
+    BatchAction:
+      type: object
+      required: [element_id, action]
+      properties:
+        element_id:
+          type: string
+        action:
+          $ref: "#/components/schemas/ElementAction"
+        text:
+          type: string
+          description: Required for set-text
+        keys:
+          type: string
+          description: Required for send-keys
+        value:
+          type: number
+          description: Required for set-range
+        direction:
+          $ref: "#/components/schemas/ScrollDirection"
+          description: Required for scroll
+
+    BatchRequest:
       type: object
       required: [actions]
       properties:
         actions:
           type: array
+          minItems: 1
+          maxItems: 100
           items:
-            type: object
-            required: [element_id, action]
-            properties:
-              element_id:
-                type: string
-              action:
-                type: string
-                enum: [click, set-text, send-keys, focus, toggle, expand, collapse, select, set-range, scroll]
-              text:
-                type: string
-              keys:
-                type: string
-              value:
-                type: number
-              direction:
-                type: string
+            $ref: "#/components/schemas/BatchAction"
+        stop_on_error:
+          type: boolean
+          default: true
+          description: Stop at the first failing step
+        delay_ms:
+          type: integer
+          default: 0
+          minimum: 0
+          maximum: 5000
+          description: Pause between steps
+
+    BatchResult:
+      type: object
+      required: [index, action, element_id, success, error]
+      properties:
+        index:
+          type: integer
+        action:
+          type: string
+        element_id:
+          type: string
+        success:
+          type: boolean
+        error:
+          type: [string, "null"]
+        code:
+          $ref: "#/components/schemas/ErrorCode"
 
     BatchResponse:
       allOf:
@@ -588,16 +1103,4 @@ components:
             data:
               type: array
               items:
-                type: object
-                properties:
-                  index:
-                    type: integer
-                  action:
-                    type: string
-                  element_id:
-                    type: string
-                  success:
-                    type: boolean
-                  error:
-                    type: string
-                    nullable: true
+                $ref: "#/components/schemas/BatchResult"

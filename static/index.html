@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<!-- The server fills in the API token (empty when no token is configured). -->
+<meta name="oculos-token" content="">
 <title>OculOS</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23111113' stroke='%234c8dff' stroke-width='2'/><circle cx='16' cy='16' r='6' fill='%234c8dff'/></svg>"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -89,15 +91,14 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 .trow.sel .tlabel{color:var(--text)}
 .tchildren{padding-left:14px}
 
-/* type badges */
-.tb-Window{background:var(--cyan-dim);color:var(--cyan)}.tb-Button{background:var(--green-dim);color:var(--green)}
-.tb-Edit{background:var(--amber-dim);color:var(--amber)}.tb-Text{background:rgba(160,160,168,.1);color:var(--text-3)}
-.tb-CheckBox,.tb-RadioButton{background:var(--purple-dim);color:var(--purple)}
-.tb-MenuItem,.tb-Menu{background:var(--purple-dim);color:var(--purple)}
-.tb-TabItem{background:var(--cyan-dim);color:var(--cyan)}
-.tb-Link{background:var(--blue-dim);color:var(--blue)}
-.tb-Image{background:var(--amber-dim);color:var(--amber)}
-.tb-ListItem,.tb-TreeItem{background:rgba(160,160,168,.08);color:var(--text-2)}
+/* type badges (see BADGE in the script for the type -> badge mapping) */
+.tb-window,.tb-tab{background:var(--cyan-dim);color:var(--cyan)}
+.tb-button{background:var(--green-dim);color:var(--green)}
+.tb-edit,.tb-image{background:var(--amber-dim);color:var(--amber)}
+.tb-text{background:rgba(160,160,168,.1);color:var(--text-3)}
+.tb-check,.tb-menu{background:var(--purple-dim);color:var(--purple)}
+.tb-link{background:var(--blue-dim);color:var(--blue)}
+.tb-item{background:rgba(160,160,168,.08);color:var(--text-2)}
 .tb-default{background:rgba(160,160,168,.06);color:var(--text-3)}
 
 /* ── right col: tabs ── */
@@ -124,7 +125,7 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 .act-btn:hover{color:var(--text);border-color:var(--text-3);background:var(--raised)}
 .act-btn.primary{color:var(--blue);border-color:rgba(76,141,255,.3)}
 .act-btn.primary:hover{background:var(--blue-dim)}
-.act-btn.wide{grid-column:span 2}
+.act-btn.wide{grid-column:span 2;width:100%}
 
 .act-input{width:100%;height:30px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:0 8px;font:12px var(--sans);color:var(--text);outline:none;transition:border .12s}
 .act-input:focus{border-color:var(--blue)}
@@ -140,6 +141,7 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 .log-ms{color:var(--text-3);flex-shrink:0}
 .log-s{flex-shrink:0;width:6px;height:6px;border-radius:50%}
 .log-s.ok{background:var(--green)}.log-s.err{background:var(--red)}
+.log-c{color:var(--red);flex-shrink:0;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── empty / loading ── */
 .empty{padding:32px 16px;text-align:center;color:var(--text-3);font-size:12px}
@@ -160,8 +162,18 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 .copy-btn:hover{color:var(--text);border-color:var(--text-3)}
 .copy-btn.copied{color:var(--green);border-color:var(--green)}
 
-/* ── uptime ── */
+/* ── uptime / auth ── */
 .topbar-uptime{font:11px var(--mono);color:var(--text-3)}
+.topbar-auth{font:11px var(--mono);color:var(--text-3);padding:0 5px;border:1px solid var(--border);border-radius:3px;line-height:16px;user-select:none}
+.topbar-auth.on{color:var(--green);border-color:rgba(62,201,122,.3)}
+.topbar-auth.warn{color:var(--red);border-color:rgba(239,80,80,.4);cursor:pointer}
+.token-form{display:flex;align-items:center;gap:4px}
+.token-form .search-input{width:180px;height:22px;font:11px var(--mono)}
+
+/* ── inspector extras ── */
+.d-hint{font:10px/1.4 var(--sans);color:var(--text-3);margin-top:4px}
+.d-hint code{font:10px var(--mono);color:var(--text-2)}
+.shot-img{display:block;max-width:100%;margin-top:2px;border:1px solid var(--border);border-radius:4px;background:repeating-conic-gradient(#1c1c1f 0% 25%,#242428 0% 50%) 50%/16px 16px}
 
 /* ── ws indicator ── */
 .ws-dot{width:6px;height:6px;border-radius:50%;background:var(--text-3);flex-shrink:0;transition:background .2s}
@@ -197,6 +209,11 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
   </div>
   <div class="topbar-right">
     <span class="topbar-uptime" id="uptime"></span>
+    <span class="topbar-auth" id="authChip" onclick="showTokenForm(true)" title="Checking authentication&hellip;">auth</span>
+    <form class="token-form" id="tokenForm" style="display:none" onsubmit="event.preventDefault();applyToken()">
+      <input class="search-input" id="tokenIn" type="password" autocomplete="off" spellcheck="false" placeholder="Paste API token&hellip;" aria-label="API token"/>
+      <button class="btn btn-sm btn-primary" type="submit">Use</button>
+    </form>
     <div class="topbar-sep"></div>
     <div class="ws-dot" id="wsDot" title="WebSocket disconnected"></div>
     <div class="topbar-sep"></div>
@@ -270,7 +287,7 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
           </div>
         </div>
       </div>
-      <div id="recSteps"><div class="empty">Press Record then interact with elements.</div></div>
+      <div id="recSteps"><div class="empty">Press Record then interact with elements.<br/><span style="font-size:11px">Steps are saved as window + element selectors (automation_id, or label + type), so exported scripts keep working after a restart.</span></div></div>
     </div>
 
     <div class="tab-body" id="panelLog">
@@ -285,15 +302,261 @@ body{background:var(--bg);color:var(--text);font:13px/1.5 var(--sans);display:fl
 
 <div class="toast-wrap" id="toasts"></div>
 
+<!-- Recorder export templates (plain text, read via textContent). -->
+<script type="text/plain" id="tplPython">
+#!/usr/bin/env python3
+"""OculOS recording, exported from the dashboard.
+
+Each step finds its window by exe_name (exact title preferred) and its element
+by selector (automation_id, or label + type), so the script keeps working after
+OculOS or the target app restarts. It fails loudly when something is missing.
+
+Env: OCULOS_URL   (default http://127.0.0.1:7878)
+     OCULOS_TOKEN (API token, if the server requires one)
+Requires: pip install requests
+"""
+import os
+import sys
+import time
+
+import requests
+
+BASE = os.environ.get("OCULOS_URL", "http://127.0.0.1:7878").rstrip("/")
+session = requests.Session()
+if os.environ.get("OCULOS_TOKEN"):
+    session.headers["X-OculOS-Token"] = os.environ["OCULOS_TOKEN"]
+
+
+def fail(msg):
+    sys.exit("oculos: " + msg)
+
+
+def call(method, path, **kwargs):
+    r = session.request(method, BASE + path, timeout=60, **kwargs)
+    try:
+        body = r.json()
+    except ValueError:
+        fail("%s %s: HTTP %d (non-JSON response)" % (method, path, r.status_code))
+    if not body.get("success"):
+        fail("%s %s: [%s] %s" % (method, path, body.get("code"), body.get("error")))
+    return body.get("data")
+
+
+def find_window(win):
+    """PID of the window with this exe_name (exact title preferred), or None."""
+    exe = win["exe_name"].lower()
+    wins = [w for w in call("GET", "/windows") if w["exe_name"].lower() == exe]
+    exact = [w for w in wins if w["title"] == win["title"]]
+    return (exact or wins)[0]["pid"] if wins else None
+
+
+def locate(win, sel, attempts=10):
+    """oculos_id of the element matching `sel` (retries for about 5 s)."""
+    key = "automation_id" if "automation_id" in sel else "label"
+    index = sel.get("index", 0)
+    for _ in range(attempts):
+        pid = find_window(win)
+        if pid is not None:
+            params = {"q": sel[key], "type": sel["type"]}
+            found = [e for e in call("GET", "/windows/%d/find" % pid, params=params)
+                     if (e.get(key) or "") == sel[key]]
+            if len(found) > index:
+                return found[index]["oculos_id"]
+        time.sleep(0.5)
+    fail("not found: element %r in window %r" % (sel, win))
+
+
+def step(win, sel, action, body=None):
+    element_id = locate(win, sel)
+    print("%-16s %r" % (action, sel))
+    call("POST", "/interact/%s/%s" % (element_id, action), json=body)
+
+</script>
+<script type="text/plain" id="tplJs">
+// OculOS recording, exported from the dashboard. Run with Node.js 18+.
+//
+// Each step finds its window by exe_name (exact title preferred) and its element
+// by selector (automation_id, or label + type), so the script keeps working after
+// OculOS or the target app restarts. It fails loudly when something is missing.
+//
+// Env: OCULOS_URL   (default http://127.0.0.1:7878)
+//      OCULOS_TOKEN (API token, if the server requires one)
+
+const BASE = (process.env.OCULOS_URL || "http://127.0.0.1:7878").replace(/\/+$/, "");
+const TOKEN = process.env.OCULOS_TOKEN || "";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function call(method, path, body) {
+  const headers = {};
+  if (TOKEN) headers["X-OculOS-Token"] = TOKEN;
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(BASE + path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`${method} ${path}: HTTP ${res.status} (non-JSON response)`);
+  }
+  if (!json.success) throw new Error(`${method} ${path}: [${json.code}] ${json.error}`);
+  return json.data;
+}
+
+async function findWindow(win) {
+  const exe = win.exe_name.toLowerCase();
+  const wins = (await call("GET", "/windows")).filter((w) => w.exe_name.toLowerCase() === exe);
+  const exact = wins.filter((w) => w.title === win.title);
+  return (exact[0] || wins[0])?.pid;
+}
+
+async function locate(win, sel, attempts = 10) {
+  const key = "automation_id" in sel ? "automation_id" : "label";
+  const index = sel.index || 0;
+  for (let i = 0; i < attempts; i++) {
+    const pid = await findWindow(win);
+    if (pid !== undefined) {
+      const qs = new URLSearchParams({ q: sel[key], type: sel.type });
+      const found = (await call("GET", `/windows/${pid}/find?${qs}`)).filter(
+        (e) => (e[key] || "") === sel[key],
+      );
+      if (found.length > index) return found[index].oculos_id;
+    }
+    await sleep(500);
+  }
+  throw new Error(`not found: element ${JSON.stringify(sel)} in window ${JSON.stringify(win)}`);
+}
+
+async function step(win, sel, action, body) {
+  const id = await locate(win, sel);
+  console.log(action.padEnd(16), JSON.stringify(sel));
+  await call("POST", `/interact/${id}/${action}`, body);
+}
+
+</script>
+<script type="text/plain" id="tplCurl">
+#!/usr/bin/env bash
+# OculOS recording, exported from the dashboard. Requires bash, curl and jq.
+#
+# Each step finds its window by exe_name (exact title preferred) and its element
+# by selector (automation_id, or label + type), so the script keeps working after
+# OculOS or the target app restarts. It fails loudly when something is missing.
+#
+# Env: OCULOS_URL   (default http://127.0.0.1:7878)
+#      OCULOS_TOKEN (API token, if the server requires one)
+set -euo pipefail
+
+BASE="${OCULOS_URL:-http://127.0.0.1:7878}"
+AUTH=()
+if [ -n "${OCULOS_TOKEN:-}" ]; then AUTH=(-H "X-OculOS-Token: ${OCULOS_TOKEN}"); fi
+
+fail() { echo "oculos: $*" >&2; exit 1; }
+
+# unwrap CONTEXT RESPONSE: print .data, or exit with the API error.
+unwrap() {
+  if [ "$(jq -r '.success' <<<"$2" 2>/dev/null)" != "true" ]; then
+    fail "$1: $(jq -r '"[\(.code // "?")] \(.error)"' <<<"$2" 2>/dev/null || printf '%s' "$2")"
+  fi
+  jq -c '.data' <<<"$2"
+}
+
+# api METHOD PATH [JSON_BODY]
+api() {
+  local out
+  if [ $# -ge 3 ]; then
+    out=$(curl -sS -X "$1" ${AUTH[@]+"${AUTH[@]}"} -H "Content-Type: application/json" -d "$3" "$BASE$2")
+  else
+    out=$(curl -sS -X "$1" ${AUTH[@]+"${AUTH[@]}"} "$BASE$2")
+  fi
+  unwrap "$1 $2" "$out"
+}
+
+# step EXE TITLE TYPE KEY VALUE INDEX ACTION [JSON_BODY]
+#   KEY is automation_id or label; VALUE must match it exactly (retries ~5 s).
+step() {
+  local exe=$1 title=$2 type=$3 key=$4 value=$5 index=$6 action=$7 pid id="" out attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    pid=$(api GET /windows | jq -r --arg exe "$exe" --arg title "$title" '
+      [.[] | select((.exe_name | ascii_downcase) == ($exe | ascii_downcase))] as $w
+      | ([$w[] | select(.title == $title)] + $w)[0].pid // empty')
+    if [ -n "$pid" ]; then
+      out=$(curl -sS -G ${AUTH[@]+"${AUTH[@]}"} --data-urlencode "q=$value" --data-urlencode "type=$type" "$BASE/windows/$pid/find")
+      id=$(unwrap "find in pid $pid" "$out" | jq -r --arg k "$key" --arg v "$value" --argjson i "$index" \
+        '[.[] | select((.[$k] // "") == $v)][$i].oculos_id // empty')
+      if [ -n "$id" ]; then break; fi
+    fi
+    sleep 0.5
+  done
+  [ -n "$id" ] || fail "not found: $type with $key=\"$value\" in $exe"
+  echo "$action $type $key=\"$value\""
+  if [ $# -ge 8 ]; then api POST "/interact/$id/$action" "$8" >/dev/null; else api POST "/interact/$id/$action" >/dev/null; fi
+}
+
+</script>
+
 <script>
-const API='';
-let selWin=null,selElem=null,logN=0,allElements=[],nodeTotal=0;
+'use strict';
+
+// ── state ──
+// API token, in order of preference:
+//  1. <meta name="oculos-token"> - filled by the server for clients on this machine;
+//  2. ?token=... in the page URL - how remote browsers open the dashboard
+//     (removed from the address bar once read);
+//  3. a token pasted into the top-bar form earlier in this tab (sessionStorage).
+const TOKEN_KEY='oculos-token';
+function storeToken(t){try{if(t)sessionStorage.setItem(TOKEN_KEY,t);else sessionStorage.removeItem(TOKEN_KEY)}catch(_){}}
+function initialToken(){
+  const meta=(document.querySelector('meta[name="oculos-token"]')?.getAttribute('content')||'').trim();
+  let fromUrl='';
+  try{
+    const u=new URL(location.href);
+    fromUrl=(u.searchParams.get('token')||'').trim();
+    if(u.searchParams.has('token')){u.searchParams.delete('token');history.replaceState(null,'',u.pathname+u.search+u.hash)}
+  }catch(_){}
+  if(meta)return meta;
+  if(fromUrl){storeToken(fromUrl);return fromUrl}
+  try{return sessionStorage.getItem(TOKEN_KEY)||''}catch(_){return ''}
+}
+let TOKEN=initialToken();
+let authRequired=null,authFailed=false,lastAuthToast=0;
+let selWin=null,selElem=null,treeWin=null,treeSeq=0,logN=0,allElements=[],nodeTotal=0;
+let recording=false,recSteps=[],shotUrl=null;
+let ws=null,wsRetry=0;
+const elWin=new WeakMap(); // element object -> window it was loaded from
+
+// ── escaping / validation ──
+// Window titles, labels, values... come from arbitrary apps (a web page <title>
+// becomes a window title). Everything server- or app-provided that goes into
+// innerHTML must pass through esc(); it is safe in text and quoted attributes.
+const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>ESC_MAP[c])}
+
+class ApiError extends Error{
+  constructor(message,code=null,status=0){super(message);this.name='ApiError';this.code=code;this.status=status}
+}
+function errText(e){
+  const m=e&&e.message?e.message:String(e);
+  return e&&e.code?`${m} [${e.code}]`:m;
+}
+
+// oculos_id: 16 hex chars (v0.2+) or a UUID (v0.1).
+const ID_RE=/^(?:[0-9a-f]{16}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+function idSeg(id){
+  if(typeof id!=='string'||!ID_RE.test(id))throw new ApiError('Invalid element id','invalid_input');
+  return id;
+}
+function numSeg(n){
+  if(!Number.isSafeInteger(n)||n<0)throw new ApiError('Invalid window id','invalid_input');
+  return String(n);
+}
 
 // ── toast ──
 function toast(msg,type='ok'){
   const d=document.createElement('div');d.className='toast '+type;d.textContent=msg;
   document.getElementById('toasts').appendChild(d);
-  setTimeout(()=>{d.style.opacity='0';d.style.transform='translateY(8px)';setTimeout(()=>d.remove(),200)},2400);
+  setTimeout(()=>{d.style.opacity='0';d.style.transform='translateY(8px)';setTimeout(()=>d.remove(),200)},type==='err'?4000:2400);
 }
 
 // ── tabs ──
@@ -303,80 +566,153 @@ function switchTab(id,el){
 }
 
 // ── api ──
-async function api(method,path,body){
-  const t0=Date.now();
+function authHeaders(h={}){if(TOKEN)h['X-OculOS-Token']=TOKEN;return h}
+
+/** Call the API. Resolves with `data` (or a Blob when `binary` and the reply is not JSON); rejects with ApiError. */
+async function request(method,path,{body,binary=false,log=true}={}){
+  const t0=Date.now();let status=0,code=null,ok=false;
   try{
-    const opts={method,headers:{'Content-Type':'application/json'}};
-    if(body)opts.body=JSON.stringify(body);
-    const r=await fetch(API+path,opts),d=await r.json();
-    addLog(method,path,r.ok?'ok':'err',Date.now()-t0);
-    return d;
-  }catch(e){addLog(method,path,'err',Date.now()-t0);throw e}
+    const headers=authHeaders(),opts={method,headers};
+    if(body!==undefined){headers['Content-Type']='application/json';opts.body=JSON.stringify(body)}
+    let r;
+    try{r=await fetch(path,opts)}catch(_){throw new ApiError('Network error \u2014 is OculOS running?','network')}
+    status=r.status;
+    if(binary&&r.ok&&!(r.headers.get('content-type')||'').includes('json')){ok=true;return await r.blob()}
+    let d=null;
+    try{d=await r.json()}catch(_){}
+    if(!d||typeof d!=='object')throw new ApiError(`HTTP ${r.status}: unexpected non-JSON response`,r.status===401?'unauthorized':null,r.status);
+    if(!d.success)throw new ApiError(d.error||`HTTP ${r.status}`,d.code||null,r.status);
+    ok=true;
+    // /health is public, so only a protected route proves the token works
+    if(authFailed&&path!=='/health'){authFailed=false;renderAuth()}
+    return d.data;
+  }catch(e){
+    code=e.code||null;
+    if(status===401||code==='unauthorized')onUnauthorized();
+    throw e;
+  }finally{
+    if(log)addLog(method,path,ok,status,code,Date.now()-t0);
+  }
 }
+const api=(method,path,body)=>request(method,path,{body});
 
 // ── log ──
-function addLog(method,path,status,ms){
-  const el=document.getElementById('logEmpty');if(el)el.remove();
+const pad2=v=>String(v).padStart(2,'0');
+const fmtTime=t=>[t.getHours(),t.getMinutes(),t.getSeconds()].map(pad2).join(':');
+function addLog(method,path,ok,status,code,ms){
+  document.getElementById('logEmpty')?.remove();
   const p=document.getElementById('logList'),d=document.createElement('div');d.className='log-row';
-  const now=new Date(),ts=[now.getHours(),now.getMinutes(),now.getSeconds()].map(v=>String(v).padStart(2,'0')).join(':');
-  d.innerHTML=`<span class="log-s ${status}"></span><span class="log-t">${ts}</span><span class="log-m ${method}">${method}</span><span class="log-p">${path}</span><span class="log-ms">${ms}ms</span>`;
-  p.insertBefore(d,p.firstChild);logN++;if(logN>200)p.lastChild?.remove();
+  const tag=ok?'':(code||(status?String(status):'error'));
+  d.innerHTML=`<span class="log-s ${ok?'ok':'err'}"></span><span class="log-t">${fmtTime(new Date())}</span><span class="log-m ${method==='GET'?'GET':'POST'}">${esc(method)}</span><span class="log-p" title="${esc(path)}">${esc(path)}</span>${tag?`<span class="log-c" title="HTTP ${esc(status)}">${esc(tag)}</span>`:''}<span class="log-ms">${esc(ms)}ms</span>`;
+  p.insertBefore(d,p.firstChild);
+  if(++logN>200)p.lastChild?.remove();
 }
 function clearLog(){document.getElementById('logList').innerHTML='<div class="empty" id="logEmpty">No requests yet.</div>';logN=0;}
 
-// ── status ──
+// ── status / auth ──
 function setStatus(ok){
   document.getElementById('sDot').className='topbar-dot'+(ok?'':' err');
   document.getElementById('sTxt').textContent=ok?'Connected':'Disconnected';
+}
+function renderAuth(){
+  const c=document.getElementById('authChip');
+  document.getElementById('tokenForm').style.display='none';
+  if(authRequired===null&&!authFailed){c.className='topbar-auth';c.textContent='auth';c.title='Authentication state unknown';return}
+  if(!authRequired&&!authFailed){c.className='topbar-auth';c.textContent='no token';c.title='This server does not require an API token (loopback bind).';return}
+  if(TOKEN&&!authFailed){c.className='topbar-auth on';c.textContent='token';c.title='API token active \u2014 sent as X-OculOS-Token.';return}
+  c.className='topbar-auth warn';c.textContent=TOKEN?'token rejected':'token required';
+  c.title='The server requires an API token (printed in the OculOS log at startup, or open /?token=<token>).';
+  showTokenForm(false);
+}
+// Small top-bar form to paste the token when none was provided.
+function showTokenForm(focus){
+  if(!authRequired&&!authFailed)return;
+  const f=document.getElementById('tokenForm');
+  f.style.display='';
+  if(focus)document.getElementById('tokenIn').focus();
+}
+function applyToken(){
+  const t=document.getElementById('tokenIn').value.trim();
+  if(!t)return;
+  TOKEN=t;storeToken(t);authFailed=false;
+  document.getElementById('tokenIn').value='';
+  document.getElementById('tokenForm').style.display='none';
+  renderAuth();
+  if(ws){try{ws.close()}catch(_){}}  // reconnects with the new token
+  loadWindows();fetchHealth();
+}
+function onUnauthorized(){
+  authFailed=true;if(authRequired===null)authRequired=true;renderAuth();
+  if(Date.now()-lastAuthToast>10000){
+    lastAuthToast=Date.now();
+    toast('Unauthorized [unauthorized] \u2014 this server requires an API token. Paste it in the top bar or open /?token=<token>.','err');
+  }
 }
 
 // ── windows ──
 async function loadWindows(){
   const el=document.getElementById('winList');el.innerHTML='<div class="empty"><div class="loading"></div></div>';
-  try{const d=await api('GET','/windows');if(!d.success)throw new Error(d.error);renderWins(d.data);setStatus(true)}
-  catch(e){el.innerHTML=`<div class="empty" style="color:var(--red)">${e.message}</div>`;setStatus(false)}
+  try{const wins=await api('GET','/windows');renderWins(Array.isArray(wins)?wins:[]);setStatus(true)}
+  catch(e){el.innerHTML=`<div class="empty" style="color:var(--red)">${esc(errText(e))}</div>`;setStatus(e.status>0)}
 }
 
-function renderWins(ws){
-  const el=document.getElementById('winList');document.getElementById('winCount').textContent=ws.length;
-  if(!ws.length){el.innerHTML='<div class="empty">No windows detected.</div>';return}
+function renderWins(wins){
+  const el=document.getElementById('winList');document.getElementById('winCount').textContent=wins.length;
+  if(!wins.length){el.innerHTML='<div class="empty">No windows detected.</div>';return}
   el.innerHTML='';
-  ws.forEach(w=>{
+  wins.forEach(w=>{
     const d=document.createElement('div');d.className='win-item'+(selWin?.pid===w.pid&&selWin?.title===w.title?' active':'');
-    const esc=s=>(s||'').replace(/</g,'&lt;');
-    d.innerHTML=`<div style="display:flex;align-items:center;gap:6px"><div class="win-name" style="flex:1" title="${esc(w.title)}">${esc(w.title)||'Untitled'}</div><div class="win-actions"><button class="win-act" onclick="event.stopPropagation();winFocus(${w.pid})" title="Focus window">&#9650;</button><button class="win-act danger" onclick="event.stopPropagation();winClose(${w.pid})" title="Close window">&times;</button></div></div>
-      <div class="win-info"><span class="chip"><b>${w.pid}</b></span><span class="chip">${esc(w.exe_name)}</span>${w.rect.width?`<span class="chip">${w.rect.width}&times;${w.rect.height}</span>`:''}</div>`;
-    d.onclick=()=>{document.querySelectorAll('.win-item').forEach(x=>x.classList.remove('active'));d.classList.add('active');selWin=w;loadTree(w.pid,w.title)};
+    const r=w.rect||{};
+    d.innerHTML=`<div style="display:flex;align-items:center;gap:6px"><div class="win-name" style="flex:1" title="${esc(w.title)}">${esc(w.title||'Untitled')}</div><div class="win-actions"><button class="win-act" data-act="focus" title="Focus window">&#9650;</button><button class="win-act danger" data-act="close" title="Close window">&times;</button></div></div>
+      <div class="win-info"><span class="chip"><b>${esc(w.pid)}</b></span><span class="chip">${esc(w.exe_name)}</span>${r.width?`<span class="chip">${esc(r.width)}&times;${esc(r.height)}</span>`:''}</div>`;
+    d.querySelector('[data-act="focus"]').addEventListener('click',e=>{e.stopPropagation();winFocus(w)});
+    d.querySelector('[data-act="close"]').addEventListener('click',e=>{e.stopPropagation();winClose(w)});
+    d.addEventListener('click',()=>{document.querySelectorAll('.win-item').forEach(x=>x.classList.remove('active'));d.classList.add('active');selWin=w;loadTree(w)});
     el.appendChild(d);
   });
 }
 
 // ── tree ──
-async function loadTree(pid,title){
-  document.getElementById('treeTitle').textContent=title||'Element tree';
+async function loadTree(w){
+  const seq=++treeSeq;treeWin=w;selElem=null;resetDetail();
+  document.getElementById('treeTitle').textContent=w.title||'Element tree';
   document.getElementById('treeSpin').style.display='';
   const ct=document.getElementById('treeCt');ct.innerHTML='';allElements=[];nodeTotal=0;
   try{
-    const d=await api('GET',`/windows/${pid}/tree`);if(!d.success)throw new Error(d.error);
-    ct.appendChild(buildNode(d.data,true));
+    const root=await api('GET',`/windows/${numSeg(w.pid)}/tree`);
+    if(seq!==treeSeq)return; // superseded by a newer load
+    ct.appendChild(buildNode(root,true,w));
     document.getElementById('nodeCount').textContent=nodeTotal;
-  }catch(e){ct.innerHTML=`<div class="empty" style="color:var(--red)">${e.message}</div>`}
-  finally{document.getElementById('treeSpin').style.display='none'}
+    filterTree();
+  }catch(e){if(seq===treeSeq)ct.innerHTML=`<div class="empty" style="color:var(--red)">${esc(errText(e))}</div>`}
+  finally{if(seq===treeSeq)document.getElementById('treeSpin').style.display='none'}
 }
 
-function buildNode(el,expandRoot){
-  nodeTotal++;allElements.push(el);
-  const div=document.createElement('div');div.className='tnode';div.dataset.label=(el.label||'').toLowerCase();div.dataset.type=(el.type||'').toLowerCase();
-  const row=document.createElement('div');row.className='trow';row.dataset.id=el.oculos_id;
-  const hasKids=el.children&&el.children.length>0;
-  const tc='tb-'+(el.type||'default');const tcFinal=document.createElement('span');
-  tcFinal.className='ttype '+(tc.match(/^tb-(Window|Button|Edit|Text|CheckBox|RadioButton|MenuItem|Menu|TabItem|Link|Image|ListItem|TreeItem)$/)?tc:'tb-default');
-  tcFinal.textContent=el.type||'?';
+// Element type -> badge colour class. Covers every ElementType the server emits.
+const BADGE=new Map(Object.entries({
+  Window:'window',Dialog:'window',TitleBar:'window',
+  Button:'button',SplitButton:'button',
+  Edit:'edit',Document:'edit',Image:'image',Text:'text',
+  CheckBox:'check',RadioButton:'check',
+  Menu:'menu',MenuBar:'menu',MenuItem:'menu',
+  TabControl:'tab',TabItem:'tab',Link:'link',
+  ListItem:'item',TreeItem:'item',DataItem:'item',HeaderItem:'item',
+}));
+
+function buildNode(el,expandRoot,win){
+  nodeTotal++;allElements.push(el);elWin.set(el,win);
+  const div=document.createElement('div');div.className='tnode';
+  div.dataset.search=[el.label,el.type,el.automation_id].filter(Boolean).join('\n').toLowerCase();
+  const row=document.createElement('div');row.className='trow';
+  const hasKids=Array.isArray(el.children)&&el.children.length>0;
+  const badge=document.createElement('span');
+  badge.className='ttype tb-'+(BADGE.get(el.type)||'default');
+  badge.textContent=el.type||'?';
   const tog=document.createElement('span');tog.className='ttoggle';
   tog.textContent=hasKids?(expandRoot?'\u25BC':'\u25B6'):'\u00B7';
   const lbl=document.createElement('span');lbl.className='tlabel';lbl.title=el.label||'';
   lbl.textContent=el.label||el.automation_id||el.class_name||'\u2014';
-  row.appendChild(tog);row.appendChild(tcFinal);row.appendChild(lbl);
+  row.appendChild(tog);row.appendChild(badge);row.appendChild(lbl);
   row.addEventListener('click',e=>{e.stopPropagation();selectEl(el,row)});
   tog.addEventListener('click',e=>{
     e.stopPropagation();
@@ -388,7 +724,7 @@ function buildNode(el,expandRoot){
   if(hasKids){
     const ch=document.createElement('div');ch.className='tchildren';
     if(!expandRoot)ch.style.display='none';
-    el.children.forEach(c=>ch.appendChild(buildNode(c,false)));
+    el.children.forEach(c=>ch.appendChild(buildNode(c,false,win)));
     div.appendChild(ch);
   }
   return div;
@@ -405,9 +741,10 @@ function filterTree(){
   const q=document.getElementById('treeSearch').value.toLowerCase().trim();
   document.querySelectorAll('.tnode').forEach(n=>{
     if(!q){n.style.display='';return}
-    const match=n.dataset.label.includes(q)||n.dataset.type.includes(q);
+    const match=n.dataset.search.includes(q);
     n.style.display=match?'':'none';
-    if(match){let p=n.parentElement;while(p&&p.classList){if(p.classList.contains('tchildren'))p.style.display='';p=p.parentElement}}
+    // keep the path to a match visible (ancestors are visited first)
+    if(match){let p=n.parentElement;while(p&&p.classList){if(p.classList.contains('tchildren')||p.classList.contains('tnode'))p.style.display='';p=p.parentElement}}
   });
 }
 
@@ -416,161 +753,207 @@ function expandAll(){document.querySelectorAll('.tchildren').forEach(c=>c.style.
 function collapseAll(){document.querySelectorAll('.tchildren').forEach(c=>c.style.display='none');document.querySelectorAll('.ttoggle').forEach(t=>{if(t.textContent==='\u25BC')t.textContent='\u25B6'})}
 
 // ── detail ──
+function resetDetail(){
+  document.getElementById('panelDetail').innerHTML='<div class="empty" id="detailEmpty">Select an element.</div>';
+  document.getElementById('panelJson').innerHTML='<div class="empty" id="jsonEmpty">Select an element to view its JSON.</div>';
+}
+function dRow(k,v,cls=''){return `<div class="d-row"><span class="d-key">${esc(k)}</span><span class="d-val ${cls}" title="${esc(v)}">${esc(v)}</span></div>`}
+
+const SIMPLE_ACTIONS=[['click','Click','primary'],['focus','Focus',''],['toggle','Toggle',''],['select','Select',''],['expand','Expand',''],['collapse','Collapse',''],['scroll-into-view','Scroll into view','']];
+
 function renderDetail(el){
   const p=document.getElementById('panelDetail');
-  const esc=s=>String(s??'').replace(/</g,'&lt;');
-  const id=el.oculos_id;
-  const acts=el.actions||[];
+  const acts=Array.isArray(el.actions)?el.actions:[];
+  const id=String(el.oculos_id??''),r=el.rect||{},dash='\u2014';
 
-  let actionsHtml='';
-  if(acts.includes('click'))actionsHtml+=`<button class="act-btn primary" onclick="doAction('click','${id}')">Click</button>`;
-  if(acts.includes('focus'))actionsHtml+=`<button class="act-btn" onclick="doAction('focus','${id}')">Focus</button>`;
-  if(acts.includes('toggle'))actionsHtml+=`<button class="act-btn" onclick="doAction('toggle','${id}')">Toggle</button>`;
-  if(acts.includes('select'))actionsHtml+=`<button class="act-btn" onclick="doAction('select','${id}')">Select</button>`;
-  if(acts.includes('expand'))actionsHtml+=`<button class="act-btn" onclick="doAction('expand','${id}')">Expand</button>`;
-  if(acts.includes('collapse'))actionsHtml+=`<button class="act-btn" onclick="doAction('collapse','${id}')">Collapse</button>`;
-  if(acts.includes('scroll-into-view'))actionsHtml+=`<button class="act-btn" onclick="doAction('scroll-into-view','${id}')">Scroll into view</button>`;
-  actionsHtml+=`<button class="act-btn highlight" onclick="doHighlight('${id}')">Highlight</button>`;
+  // Only fixed strings go into data-act; element data is bound via closures below.
+  let actionsHtml=SIMPLE_ACTIONS.filter(([a])=>acts.includes(a)).map(([a,l,c])=>`<button class="act-btn ${c}" data-act="${a}">${l}</button>`).join('');
+  actionsHtml+='<button class="act-btn highlight" data-act="highlight">Highlight</button><button class="act-btn" data-act="screenshot">Screenshot</button>';
 
-  let textHtml='';
-  if(acts.includes('set-text'))textHtml=`
+  const textHtml=acts.includes('set-text')?`
     <div class="d-section">
       <div class="d-title">Set text</div>
-      <input class="act-input" id="txtIn" placeholder="New value&hellip;" value="${esc(el.value||'')}"/>
-      <div style="margin-top:4px"><button class="act-btn primary wide" onclick="doSetText('${id}')">Apply</button></div>
-    </div>`;
+      <input class="act-input" id="txtIn" placeholder="New value&hellip;"/>
+      <div style="margin-top:4px"><button class="act-btn primary wide" data-act="set-text">Apply</button></div>
+    </div>`:'';
 
-  let keysHtml='';
-  if(acts.includes('send-keys'))keysHtml=`
+  const keysHtml=acts.includes('send-keys')?`
     <div class="d-section">
       <div class="d-title">Send keys</div>
       <input class="act-input" id="keysIn" placeholder="e.g. hello{ENTER}"/>
-      <div style="margin-top:4px"><button class="act-btn primary wide" onclick="doSendKeys('${id}')">Send</button></div>
-    </div>`;
+      <div class="d-hint">Text plus <code>{ENTER}</code> <code>{TAB 3}</code> <code>{CTRL+SHIFT+T}</code> <code>{MOD+C}</code> <code>{WIN+D}</code>; <code>{{</code> / <code>}}</code> for literal braces.</div>
+      <div style="margin-top:4px"><button class="act-btn primary wide" data-act="send-keys">Send</button></div>
+    </div>`:'';
 
-  let rangeHtml='';
-  if(acts.includes('set-range')&&el.range)rangeHtml=`
+  const rg=el.range;
+  const rangeHtml=acts.includes('set-range')&&rg?`
     <div class="d-section">
       <div class="d-title">Range</div>
-      <div class="d-row"><span class="d-key">Current</span><span class="d-val">${el.range.value}</span></div>
-      <div class="d-row"><span class="d-key">Min / Max</span><span class="d-val">${el.range.minimum} \u2013 ${el.range.maximum}</span></div>
-      <input class="act-input" id="rangeIn" type="number" min="${el.range.minimum}" max="${el.range.maximum}" step="${el.range.step||1}" value="${el.range.value}"/>
-      <div style="margin-top:4px"><button class="act-btn primary wide" onclick="doSetRange('${id}')">Set value</button></div>
-    </div>`;
+      ${dRow('Current',rg.value)}
+      ${dRow('Min / Max',`${rg.minimum} \u2013 ${rg.maximum}`)}
+      <input class="act-input" id="rangeIn" type="number" min="${esc(rg.minimum)}" max="${esc(rg.maximum)}" step="${esc(rg.step||1)}" value="${esc(rg.value)}"/>
+      <div style="margin-top:4px"><button class="act-btn primary wide" data-act="set-range">Set value</button></div>
+    </div>`:'';
 
-  let scrollHtml='';
-  if(acts.includes('scroll'))scrollHtml=`
+  const scrollHtml=acts.includes('scroll')?`
     <div class="d-section">
       <div class="d-title">Scroll</div>
       <div class="d-actions">
-        <button class="act-btn" onclick="doScroll('${id}','up')">Up</button>
-        <button class="act-btn" onclick="doScroll('${id}','down')">Down</button>
-        <button class="act-btn" onclick="doScroll('${id}','left')">Left</button>
-        <button class="act-btn" onclick="doScroll('${id}','right')">Right</button>
+        ${['up','down','left','right','page-up','page-down'].map(d=>`<button class="act-btn" data-act="scroll" data-dir="${d}">${d.replace('-',' ')}</button>`).join('')}
       </div>
-    </div>`;
+    </div>`:'';
 
   p.innerHTML=`<div class="detail-wrap">
     <div class="d-section">
       <div class="d-title">Identity</div>
-      <div class="d-row"><span class="d-key">ID</span><span class="d-val" style="cursor:pointer" title="Click to copy: ${id}" onclick="copyText('${id}')">${id.substring(0,8)}&hellip; <span style='font-size:9px;color:var(--text-3)'>&#x2398;</span></span></div>
-      <div class="d-row"><span class="d-key">Type</span><span class="d-val">${el.type||'\u2014'}</span></div>
-      <div class="d-row"><span class="d-key">Label</span><span class="d-val">${esc(el.label)||'\u2014'}</span></div>
-      <div class="d-row"><span class="d-key">Value</span><span class="d-val">${esc(el.value)||'\u2014'}</span></div>
-      ${el.automation_id?`<div class="d-row"><span class="d-key">Automation ID</span><span class="d-val">${esc(el.automation_id)}</span></div>`:''}
-      ${el.class_name?`<div class="d-row"><span class="d-key">Class</span><span class="d-val">${esc(el.class_name)}</span></div>`:''}
-      ${el.help_text?`<div class="d-row"><span class="d-key">Help</span><span class="d-val">${esc(el.help_text)}</span></div>`:''}
+      <div class="d-row"><span class="d-key">ID</span><span class="d-val" data-act="copy-id" style="cursor:pointer" title="Click to copy: ${esc(id)}">${esc(id.length>16?id.slice(0,8)+'\u2026':id)} <span style="font-size:9px;color:var(--text-3)">&#x2398;</span></span></div>
+      ${dRow('Type',el.type||dash)}
+      ${dRow('Label',el.label||dash)}
+      ${dRow('Value',el.value||dash)}
+      ${el.automation_id?dRow('Automation ID',el.automation_id):''}
+      ${el.class_name?dRow('Class',el.class_name):''}
+      ${el.help_text?dRow('Help',el.help_text):''}
+      ${el.keyboard_shortcut?dRow('Shortcut',el.keyboard_shortcut):''}
     </div>
     <div class="d-section">
       <div class="d-title">Layout</div>
-      <div class="d-row"><span class="d-key">Position</span><span class="d-val">${el.rect.x}, ${el.rect.y}</span></div>
-      <div class="d-row"><span class="d-key">Size</span><span class="d-val">${el.rect.width} \u00d7 ${el.rect.height}</span></div>
+      ${dRow('Position',`${r.x??0}, ${r.y??0}`)}
+      ${dRow('Size',`${r.width??0} \u00D7 ${r.height??0}`)}
     </div>
     <div class="d-section">
       <div class="d-title">State</div>
-      <div class="d-row"><span class="d-key">Enabled</span><span class="d-val ${el.enabled?'on':'off'}">${el.enabled?'Yes':'No'}</span></div>
-      <div class="d-row"><span class="d-key">Focused</span><span class="d-val ${el.focused?'on':''}">${el.focused?'Yes':'No'}</span></div>
-      ${el.toggle_state!=null?`<div class="d-row"><span class="d-key">Toggle</span><span class="d-val">${el.toggle_state}</span></div>`:''}
-      ${el.is_selected!=null?`<div class="d-row"><span class="d-key">Selected</span><span class="d-val">${el.is_selected?'Yes':'No'}</span></div>`:''}
-      ${el.expand_state!=null?`<div class="d-row"><span class="d-key">Expand</span><span class="d-val">${el.expand_state}</span></div>`:''}
-      <div class="d-row"><span class="d-key">Children</span><span class="d-val">${el.children?.length??0}</span></div>
+      ${dRow('Enabled',el.enabled?'Yes':'No',el.enabled?'on':'off')}
+      ${dRow('Focused',el.focused?'Yes':'No',el.focused?'on':'')}
+      ${el.toggle_state!=null?dRow('Toggle',el.toggle_state):''}
+      ${el.is_selected!=null?dRow('Selected',el.is_selected?'Yes':'No'):''}
+      ${el.expand_state!=null?dRow('Expand',el.expand_state):''}
+      ${dRow('Children',Array.isArray(el.children)?el.children.length:0)}
     </div>
-    ${acts.length?`<div class="d-section"><div class="d-title">Actions</div><div class="d-actions">${actionsHtml}</div></div>`:''}
+    <div class="d-section"><div class="d-title">Actions</div><div class="d-actions">${actionsHtml}</div></div>
     ${textHtml}${keysHtml}${rangeHtml}${scrollHtml}
+    <div class="d-section" id="shotBox" style="display:none"><div class="d-title">Screenshot</div><img class="shot-img" alt="Element screenshot"/></div>
   </div>`;
+
+  const txtIn=p.querySelector('#txtIn');
+  if(txtIn){txtIn.value=el.value||'';txtIn.addEventListener('keydown',e=>{if(e.key==='Enter')doSetText(el)})}
+  p.querySelector('#keysIn')?.addEventListener('keydown',e=>{if(e.key==='Enter')doSendKeys(el)});
+  p.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',()=>onDetailAction(b.dataset.act,b.dataset.dir,el)));
+}
+
+function onDetailAction(act,dir,el){
+  switch(act){
+    case 'copy-id':return copyText(el.oculos_id);
+    case 'highlight':return doHighlight(el);
+    case 'screenshot':return doScreenshot(el);
+    case 'set-text':return doSetText(el);
+    case 'send-keys':return doSendKeys(el);
+    case 'set-range':return doSetRange(el);
+    case 'scroll':return doScroll(el,dir);
+    default:return doAction(act,el);
+  }
 }
 
 // ── interactions ──
-async function doAction(action,id){
-  try{const d=await api('POST',`/interact/${id}/${action}`);if(!d.success)throw new Error(d.error);toast(`${action} OK`)}
-  catch(e){toast(`${action}: ${e.message}`,'err')}
+async function interact(el,action,body,okMsg,record=true){
+  try{
+    await api('POST',`/interact/${idSeg(el.oculos_id)}/${action}`,body);
+    if(record)recAdd(action,el,body);
+    toast(okMsg||`${action} OK`);
+  }catch(e){toast(`${action}: ${errText(e)}`,'err')}
 }
-async function doSetText(id){
+function doAction(action,el){return interact(el,action)}
+function doSetText(el){
   const v=document.getElementById('txtIn')?.value;if(v==null)return;
-  try{const d=await api('POST',`/interact/${id}/set-text`,{text:v});if(!d.success)throw new Error(d.error);toast('Text set')}
-  catch(e){toast('Set text: '+e.message,'err')}
+  return interact(el,'set-text',{text:v},'Text set');
 }
-async function doSendKeys(id){
+function doSendKeys(el){
   const v=document.getElementById('keysIn')?.value;if(!v)return;
-  try{const d=await api('POST',`/interact/${id}/send-keys`,{keys:v});if(!d.success)throw new Error(d.error);toast('Keys sent')}
-  catch(e){toast('Send keys: '+e.message,'err')}
+  return interact(el,'send-keys',{keys:v},'Keys sent');
 }
-async function doSetRange(id){
-  const v=parseFloat(document.getElementById('rangeIn')?.value);if(isNaN(v))return;
-  try{const d=await api('POST',`/interact/${id}/set-range`,{value:v});if(!d.success)throw new Error(d.error);toast('Range set')}
-  catch(e){toast('Set range: '+e.message,'err')}
+function doSetRange(el){
+  const v=parseFloat(document.getElementById('rangeIn')?.value);
+  if(!Number.isFinite(v)){toast('Set range: enter a number','err');return}
+  return interact(el,'set-range',{value:v},'Range set');
 }
-async function doScroll(id,dir){
-  try{const d=await api('POST',`/interact/${id}/scroll`,{direction:dir});if(!d.success)throw new Error(d.error);recAdd('scroll',id,{direction:dir});toast('Scrolled '+dir)}
-  catch(e){toast('Scroll: '+e.message,'err')}
-}
-async function doHighlight(id){
-  try{const d=await api('POST',`/interact/${id}/highlight`,{duration_ms:2000});if(!d.success)throw new Error(d.error);toast('Highlighted')}
-  catch(e){toast('Highlight: '+e.message,'err')}
+function doScroll(el,dir){return interact(el,'scroll',{direction:dir},'Scrolled '+dir)}
+function doHighlight(el){return interact(el,'highlight',{duration_ms:2000},'Highlighted',false)}
+async function doScreenshot(el){
+  try{
+    const blob=await request('GET',`/interact/${idSeg(el.oculos_id)}/screenshot`,{binary:true});
+    if(!(blob instanceof Blob))throw new ApiError('Unexpected response','internal');
+    if(shotUrl)URL.revokeObjectURL(shotUrl);
+    shotUrl=URL.createObjectURL(blob);
+    const box=document.getElementById('shotBox');
+    if(box&&selElem===el){box.style.display='';box.querySelector('img').src=shotUrl}
+    toast('Screenshot captured');
+  }catch(e){toast('Screenshot: '+errText(e),'err')}
 }
 
 // ── window management ──
-async function winFocus(pid){
-  try{const d=await api('POST',`/windows/${pid}/focus`);if(!d.success)throw new Error(d.error);toast('Window focused')}
-  catch(e){toast('Focus: '+e.message,'err')}
+async function winFocus(w){
+  try{await api('POST',`/windows/${numSeg(w.pid)}/focus`);toast('Window focused')}
+  catch(e){toast('Focus: '+errText(e),'err')}
 }
-async function winClose(pid){
-  try{const d=await api('POST',`/windows/${pid}/close`);if(!d.success)throw new Error(d.error);toast('Window closed');setTimeout(loadWindows,500)}
-  catch(e){toast('Close: '+e.message,'err')}
+async function winClose(w){
+  try{await api('POST',`/windows/${numSeg(w.pid)}/close`);toast('Window closed');setTimeout(loadWindows,500)}
+  catch(e){toast('Close: '+errText(e),'err')}
 }
 
 // ── copy ──
 function copyText(txt){
-  navigator.clipboard.writeText(txt).then(()=>toast('Copied to clipboard')).catch(()=>toast('Copy failed','err'));
+  navigator.clipboard.writeText(String(txt)).then(()=>toast('Copied to clipboard')).catch(()=>toast('Copy failed','err'));
 }
 
 // ── json panel ──
+function elementJson(el){const clean={...el};delete clean.children;return JSON.stringify(clean,null,2)}
 function renderJson(el){
   const p=document.getElementById('panelJson');
-  const clean={...el};delete clean.children;
-  const json=JSON.stringify(clean,null,2);
   p.innerHTML=`<div class="json-wrap">
     <div class="copy-row">
-      <button class="copy-btn" onclick="copyJson(this)">Copy JSON</button>
-      <button class="copy-btn" onclick="copyText('${el.oculos_id}')">Copy ID</button>
+      <button class="copy-btn" data-copy="json">Copy JSON</button>
+      <button class="copy-btn" data-copy="id">Copy ID</button>
     </div>
-    <pre class="json-pre">${json.replace(/</g,'&lt;')}</pre>
+    <pre class="json-pre"></pre>
   </div>`;
+  p.querySelector('.json-pre').textContent=elementJson(el);
+  p.querySelector('[data-copy="json"]').addEventListener('click',e=>copyJson(e.currentTarget,el));
+  p.querySelector('[data-copy="id"]').addEventListener('click',()=>copyText(el.oculos_id));
 }
-function copyJson(btn){
-  if(!selElem)return;
-  const clean={...selElem};delete clean.children;
-  navigator.clipboard.writeText(JSON.stringify(clean,null,2)).then(()=>{
+function copyJson(btn,el){
+  navigator.clipboard.writeText(elementJson(el)).then(()=>{
     btn.textContent='Copied!';btn.classList.add('copied');
     setTimeout(()=>{btn.textContent='Copy JSON';btn.classList.remove('copied')},1500);
-  });
+  }).catch(()=>toast('Copy failed','err'));
 }
 
 // ── recorder ──
-let recording=false, recSteps=[];
-function recAdd(action,id,body){
+// Each step stores a selector, not the session's oculos_id:
+//   window  -> pid (informational) + exe_name + title
+//   element -> automation_id if present, else label; plus type and, when the
+//             selector is ambiguous in the loaded tree, the match index.
+function selectorFor(el){
+  const sel={type:String(el.type||'Unknown')};
+  let same;
+  if(el.automation_id){
+    sel.automation_id=String(el.automation_id);
+    same=allElements.filter(e=>e.type===el.type&&e.automation_id===el.automation_id);
+  }else{
+    sel.label=String(el.label||'');
+    same=allElements.filter(e=>e.type===el.type&&String(e.label||'')===sel.label);
+  }
+  const i=same.indexOf(el);
+  if(i>0)sel.index=i;
+  return sel;
+}
+function recAdd(action,el,body){
   if(!recording)return;
-  recSteps.push({action,id,body:body||null,ts:Date.now()});
+  const w=elWin.get(el)||treeWin;
+  if(!w){toast('Recorder: unknown window for this element','err');return}
+  recSteps.push({
+    action,body:body??null,
+    win:{pid:w.pid,hwnd:w.hwnd,exe_name:String(w.exe_name||''),title:String(w.title||'')},
+    sel:selectorFor(el),ts:Date.now(),
+  });
   updateRecUI();
 }
 function toggleRecording(){
@@ -580,19 +963,23 @@ function toggleRecording(){
   document.getElementById('recLabel').className='rec-label'+(recording?' recording':'');
   document.getElementById('recLabel').textContent=recording?'Recording':'Stopped';
   document.getElementById('recToggle').textContent=recording?'Stop':'Record';
-  document.getElementById('recExportBtn').disabled=recording||recSteps.length===0;
   updateRecUI();
 }
+function selText(s){
+  const base=s.automation_id!=null?`${s.type} #${s.automation_id}`:`${s.type} "${s.label}"`;
+  return s.index?`${base} [${s.index}]`:base;
+}
+const REC_EMPTY=document.getElementById('recSteps').innerHTML;
 function updateRecUI(){
   document.getElementById('recCount').textContent=recSteps.length+' steps';
   document.getElementById('recExportBtn').disabled=recording||recSteps.length===0;
   const ct=document.getElementById('recSteps');
-  if(!recSteps.length){ct.innerHTML='<div class="empty">Press Record then interact with elements.</div>';return}
+  if(!recSteps.length){ct.innerHTML=REC_EMPTY;return}
   ct.innerHTML='';
   recSteps.forEach((s,i)=>{
     const d=document.createElement('div');d.className='log-row';
-    const t=new Date(s.ts),ts=[t.getHours(),t.getMinutes(),t.getSeconds()].map(v=>String(v).padStart(2,'0')).join(':');
-    d.innerHTML=`<span class="log-s ok"></span><span class="log-t">${ts}</span><span class="log-m POST" style="width:auto">${s.action}</span><span class="log-p">${s.id.substring(0,8)}${s.body?(' '+JSON.stringify(s.body)):''}</span><span class="log-ms">#${i+1}</span>`;
+    const desc=`${s.win.exe_name} \u203A ${selText(s.sel)}${s.body?' '+JSON.stringify(s.body):''}`;
+    d.innerHTML=`<span class="log-s ok"></span><span class="log-t">${fmtTime(new Date(s.ts))}</span><span class="log-m POST" style="width:auto">${esc(s.action)}</span><span class="log-p" title="${esc(desc)}">${esc(desc)}</span><span class="log-ms">#${i+1}</span>`;
     ct.appendChild(d);
   });
 }
@@ -601,97 +988,105 @@ function toggleExportMenu(){
   dd.classList.toggle('open');
   setTimeout(()=>{document.addEventListener('click',()=>dd.classList.remove('open'),{once:true})},0);
 }
-function exportAs(lang){
-  document.getElementById('recDropdown').classList.remove('open');
-  let code='';
-  const base='http://127.0.0.1:7878';
-  if(lang==='python'){
-    code='import requests\n\n';
-    recSteps.forEach((s,i)=>{
-      const url=`${base}/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}", json=${JSON.stringify(s.body).replace(/"/g,"'")})\n\n`;
-      else code+=`# Step ${i+1}: ${s.action}\nrequests.post("${url}")\n\n`;
-    });
-  } else if(lang==='javascript'){
-    code='const API = "http://127.0.0.1:7878";\n\n';
-    recSteps.forEach((s,i)=>{
-      const path=`/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(${JSON.stringify(s.body)}) });\n\n`;
-      else code+=`// Step ${i+1}: ${s.action}\nawait fetch(API + "${path}", { method: "POST" });\n\n`;
-    });
-  } else if(lang==='curl'){
-    recSteps.forEach((s,i)=>{
-      const url=`${base}/interact/${s.id}/${s.action}`;
-      if(s.body)code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST -H "Content-Type: application/json" -d '${JSON.stringify(s.body)}' "${url}"\n\n`;
-      else code+=`# Step ${i+1}: ${s.action}\ncurl -s -X POST "${url}"\n\n`;
-    });
-  }
-  navigator.clipboard.writeText(code).then(()=>toast(`${lang} script copied (${recSteps.length} steps)`)).catch(()=>{
-    const w=window.open('','_blank');if(w){w.document.write('<pre>'+code.replace(/</g,'&lt;')+'</pre>');}
-  });
+
+// Literal for Python / JavaScript source. JSON of strings, numbers and flat
+// objects is valid in both; U+2028/2029 are escaped for older JS parsers.
+function lit(v){return JSON.stringify(v).replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029')}
+// Single-quoted shell word: ' -> '\''
+function shq(s){return "'"+String(s).replace(/\0/g,'').replace(/'/g,"'\\''")+"'"}
+function tpl(id){return document.getElementById(id).textContent.replace(/^\n/,'')}
+const pidNote=w=>Number.isSafeInteger(w.pid)?`pid ${w.pid} when recorded`:'';
+
+// Assign WIN1, WIN2... to the distinct windows used by the steps.
+function windowVars(steps){
+  const names=new Map(),defs=[];
+  const key=s=>s.win.exe_name+'\0'+s.win.title;
+  steps.forEach(s=>{if(!names.has(key(s))){const n='WIN'+(names.size+1);names.set(key(s),n);defs.push({name:n,win:s.win})}});
+  return {nameOf:s=>names.get(key(s)),defs};
 }
 
-// patch doAction to record
-const _origDoAction=doAction;
-doAction=async function(action,id){
-  try{const d=await api('POST',`/interact/${id}/${action}`);if(!d.success)throw new Error(d.error);recAdd(action,id);toast(`${action} OK`)}
-  catch(e){toast(`${action}: ${e.message}`,'err')}
-};
-const _origDoSetText=doSetText;
-doSetText=async function(id){
-  const v=document.getElementById('txtIn')?.value;if(v==null)return;
-  try{const d=await api('POST',`/interact/${id}/set-text`,{text:v});if(!d.success)throw new Error(d.error);recAdd('set-text',id,{text:v});toast('Text set')}
-  catch(e){toast('Set text: '+e.message,'err')}
-};
-const _origDoSendKeys=doSendKeys;
-doSendKeys=async function(id){
-  const v=document.getElementById('keysIn')?.value;if(!v)return;
-  try{const d=await api('POST',`/interact/${id}/send-keys`,{keys:v});if(!d.success)throw new Error(d.error);recAdd('send-keys',id,{keys:v});toast('Keys sent')}
-  catch(e){toast('Send keys: '+e.message,'err')}
-};
+function exportPython(steps){
+  const {nameOf,defs}=windowVars(steps);
+  let out=tpl('tplPython')+'\n';
+  defs.forEach(d=>{out+=`${d.name} = ${lit({exe_name:d.win.exe_name,title:d.win.title})}  # ${pidNote(d.win)}\n`});
+  steps.forEach((s,i)=>{
+    out+=`\n# Step ${i+1}: ${s.action}\nstep(${nameOf(s)}, ${lit(s.sel)}, ${lit(s.action)}${s.body?', '+lit(s.body):''})\n`;
+  });
+  return out+'\nprint("done: %d steps" % '+steps.length+')\n';
+}
+function exportJs(steps){
+  const {nameOf,defs}=windowVars(steps);
+  let out=tpl('tplJs')+'async function main() {\n';
+  defs.forEach(d=>{out+=`  const ${d.name} = ${lit({exe_name:d.win.exe_name,title:d.win.title})}; // ${pidNote(d.win)}\n`});
+  steps.forEach((s,i)=>{
+    out+=`\n  // Step ${i+1}: ${s.action}\n  await step(${nameOf(s)}, ${lit(s.sel)}, ${lit(s.action)}${s.body?', '+lit(s.body):''});\n`;
+  });
+  out+=`\n  console.log("done: ${steps.length} steps");\n}\n\nmain().catch((e) => {\n  console.error("oculos: " + e.message);\n  process.exit(1);\n});\n`;
+  return out;
+}
+function exportCurl(steps){
+  const {nameOf,defs}=windowVars(steps);
+  let out=tpl('tplCurl');
+  defs.forEach(d=>{out+=`${d.name}_EXE=${shq(d.win.exe_name)}\n${d.name}_TITLE=${shq(d.win.title)}  # ${pidNote(d.win)}\n`});
+  steps.forEach((s,i)=>{
+    const n=nameOf(s),key=s.sel.automation_id!=null?'automation_id':'label';
+    out+=`\n# Step ${i+1}: ${s.action}\nstep "$${n}_EXE" "$${n}_TITLE" ${shq(s.sel.type)} ${key} ${shq(s.sel[key])} ${s.sel.index||0} ${shq(s.action)}${s.body?' '+shq(JSON.stringify(s.body)):''}\n`;
+  });
+  return out+`\necho "done: ${steps.length} steps"\n`;
+}
+function exportAs(lang){
+  document.getElementById('recDropdown').classList.remove('open');
+  if(!recSteps.length)return;
+  const [code,file]=lang==='python'?[exportPython(recSteps),'oculos_recording.py']
+    :lang==='javascript'?[exportJs(recSteps),'oculos_recording.js']
+    :[exportCurl(recSteps),'oculos_recording.sh'];
+  const download=()=>{
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([code],{type:'text/plain'}));a.download=file;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+    toast(`${lang} script downloaded (${recSteps.length} steps)`);
+  };
+  if(navigator.clipboard?.writeText)navigator.clipboard.writeText(code).then(()=>toast(`${lang} script copied (${recSteps.length} steps)`)).catch(download);
+  else download();
+}
 
-// ── health / uptime ──
+// ── health / uptime / auth state ──
 async function fetchHealth(){
   try{
-    const r=await fetch('/health');
-    const d=await r.json();
-    if(d.success&&d.data){
-      const s=d.data.uptime_secs;
-      const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
-      const parts=[];
-      if(h)parts.push(h+'h');
-      if(m)parts.push(m+'m');
-      parts.push(sec+'s');
-      document.getElementById('uptime').textContent='up '+parts.join(' ');
-      document.getElementById('uptime').title=`v${d.data.version} | ${d.data.platform} ${d.data.arch}`;
-    }
+    const h=await request('GET','/health',{log:false});
+    const s=Number(h.uptime_secs)||0;
+    const hh=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+    const parts=[];
+    if(hh)parts.push(hh+'h');
+    if(m)parts.push(m+'m');
+    parts.push(sec+'s');
+    const up=document.getElementById('uptime');
+    up.textContent='up '+parts.join(' ');
+    up.title=`v${h.version} | ${h.platform} ${h.arch}`;
+    authRequired=!!h.auth_required;renderAuth();
   }catch(e){}
 }
 
 // ── WebSocket ──
-let ws=null,wsRetry=0;
 function connectWs(){
   const proto=location.protocol==='https:'?'wss:':'ws:';
-  ws=new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onopen=()=>{
-    wsRetry=0;
-    document.getElementById('wsDot').className='ws-dot on';
-    document.getElementById('wsDot').title='WebSocket connected';
-  };
+  const q=TOKEN?`?token=${encodeURIComponent(TOKEN)}`:'';
+  const dot=document.getElementById('wsDot');
+  try{ws=new WebSocket(`${proto}//${location.host}/ws${q}`)}
+  catch(_){wsRetry++;setTimeout(connectWs,Math.min(wsRetry*1000,10000));return}
+  ws.onopen=()=>{wsRetry=0;dot.className='ws-dot on';dot.title='WebSocket connected'};
   ws.onmessage=(e)=>{
     try{
       const msg=JSON.parse(e.data);
       if(msg.type==='action'){
-        // flash the WS dot
-        const dot=document.getElementById('wsDot');
-        dot.style.background='var(--green)';
+        // flash the WS dot (red for a failed action)
+        dot.style.background=msg.data&&msg.data.success===false?'var(--red)':'var(--green)';
         setTimeout(()=>dot.style.background='',300);
       }
     }catch(err){}
   };
   ws.onclose=()=>{
-    document.getElementById('wsDot').className='ws-dot';
-    document.getElementById('wsDot').title='WebSocket disconnected';
+    dot.className='ws-dot';dot.title='WebSocket disconnected';
     wsRetry++;
     setTimeout(connectWs,Math.min(wsRetry*1000,10000));
   };
@@ -701,15 +1096,17 @@ function connectWs(){
 // ── keyboard shortcuts ──
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
   if(e.key==='r'||e.key==='R'){e.preventDefault();loadWindows()}
   if(e.key==='/'){e.preventDefault();document.getElementById('treeSearch').focus()}
   if(e.key==='e'||e.key==='E'){e.preventDefault();expandAll()}
   if(e.key==='c'||e.key==='C'){e.preventDefault();collapseAll()}
   if(e.key==='j'||e.key==='J'){e.preventDefault();if(selElem)switchTab('json',document.querySelector('.tab[data-tab="json"]'))}
-  if(e.key==='h'||e.key==='H'){e.preventDefault();if(selElem)doHighlight(selElem.oculos_id)}
+  if(e.key==='h'||e.key==='H'){e.preventDefault();if(selElem)doHighlight(selElem)}
 });
 
 // ── init ──
+renderAuth();
 loadWindows();
 fetchHealth();
 connectWs();
