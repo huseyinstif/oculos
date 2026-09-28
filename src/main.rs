@@ -1,22 +1,23 @@
 mod api;
+mod error;
+mod keys;
 mod mcp;
+mod ops;
 mod platform;
+mod registry;
 mod types;
 
-use std::{net::SocketAddr, sync::Arc};
+#[cfg(test)]
+mod tests;
 
-use anyhow::Result;
-use axum::Router;
+use std::{io::IsTerminal, net::SocketAddr, path::PathBuf, sync::Arc};
+
+use anyhow::{Context, Result};
 use clap::Parser;
-use tower_http::{
-    cors::{Any, CorsLayer},
-    services::ServeDir,
-    trace::TraceLayer,
-};
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use api::AppState;
+use api::{AppState, ServerConfig};
 use platform::{PlatformBackend, UiBackend};
 
 /// OculOS — "If it's on the screen, it's an API."
@@ -27,11 +28,28 @@ struct Args {
     #[arg(short, long, default_value = "127.0.0.1:7878")]
     bind: SocketAddr,
 
-    /// Path to the static dashboard files.
-    #[arg(long, default_value = "static")]
-    static_dir: String,
+    /// Require this API token (header `Authorization: Bearer <token>` or
+    /// `X-OculOS-Token`). A random token is generated automatically when
+    /// binding to a non-loopback address without one.
+    #[arg(long, env = "OCULOS_TOKEN", hide_env_values = true)]
+    token: Option<String>,
 
-    /// Log level (trace, debug, info, warn, error).
+    /// Allow a browser origin (e.g. http://localhost:3000) to call the API.
+    /// Repeatable. Enables CORS for exactly these origins.
+    #[arg(long = "allow-origin", value_name = "ORIGIN")]
+    allow_origins: Vec<String>,
+
+    /// Accept an additional Host header name (IP literals and `localhost`
+    /// are always accepted). Repeatable.
+    #[arg(long = "allow-host", value_name = "HOST")]
+    allow_hosts: Vec<String>,
+
+    /// Serve the dashboard from this directory instead of the copy embedded
+    /// in the binary (useful while editing static/index.html).
+    #[arg(long)]
+    static_dir: Option<PathBuf>,
+
+    /// Log level (trace, debug, info, warn, error). Logs go to stderr.
     #[arg(long, default_value = "info")]
     log: String,
 
@@ -46,60 +64,77 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // ── Logging ───────────────────────────────────────────────────────────────
+    // Always stderr: in MCP mode stdout carries the JSON-RPC stream.
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| args.log.as_str().into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(std::io::stderr().is_terminal()),
+        )
         .init();
 
     // ── Platform backend ──────────────────────────────────────────────────────
     info!("Initialising platform UI backend…");
     let backend: Arc<dyn UiBackend> =
-        Arc::new(PlatformBackend::new().expect("Failed to initialise UI Automation backend"));
+        Arc::new(PlatformBackend::new().context("Failed to initialise the UI automation backend")?);
     info!("Backend ready.");
 
     // ── MCP mode ──────────────────────────────────────────────────────────────
     if args.mcp {
-        info!("OculOS MCP server starting on stdio (protocol version 2024-11-05)");
+        info!("OculOS MCP server running on stdio");
         tokio::task::spawn_blocking(move || mcp::run_mcp(backend)).await??;
         return Ok(());
     }
 
-    let ws_tx = api::ws::create_broadcast();
-    let state = AppState { backend, ws_tx };
+    // ── Security ──────────────────────────────────────────────────────────────
+    let mut token = args.token.filter(|t| !t.trim().is_empty());
+    if token.is_none() && !args.bind.ip().is_loopback() {
+        let generated = api::security::generate_token();
+        warn!(
+            "Binding to non-loopback address {} — an API token is required. Generated token: {}",
+            args.bind, generated
+        );
+        token = Some(generated);
+    }
 
-    // ── CORS ──────────────────────────────────────────────────────────────────
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
-    // ── Router ────────────────────────────────────────────────────────────────
-    let api_routes = api::router(state);
-
-    let app = Router::new()
-        // API routes under /api namespace (also available at root for simplicity)
-        .merge(api_routes)
-        // Dashboard — served at /
-        .nest_service("/", ServeDir::new(&args.static_dir))
-        .layer(cors)
-        .layer(TraceLayer::new_for_http());
+    let config = ServerConfig {
+        token,
+        allowed_origins: args.allow_origins,
+        allowed_hosts: args.allow_hosts,
+        static_dir: args.static_dir,
+    };
+    let auth = config.token.is_some();
+    let app = api::build_app(AppState::new(backend, config));
 
     // ── Serve ─────────────────────────────────────────────────────────────────
-    info!("");
-    info!("╔══════════════════════════════════════════════════╗");
-    info!("║          OculOS is running                       ║");
-    info!("║  \"If it's on the screen, it's an API.\"          ║");
-    info!("╠══════════════════════════════════════════════════╣");
-    info!("║  Dashboard →  http://{}            ║", args.bind);
-    info!("║  API        →  http://{}/windows   ║", args.bind);
-    info!("╚══════════════════════════════════════════════════╝");
-    info!("");
+    let listener = tokio::net::TcpListener::bind(args.bind)
+        .await
+        .with_context(|| format!("Failed to bind {}", args.bind))?;
 
-    let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    axum::serve(listener, app).await?;
+    info!("OculOS {} is running", env!("CARGO_PKG_VERSION"));
+    info!("  Dashboard → http://{}/", args.bind);
+    info!("  API       → http://{}/windows", args.bind);
+    info!(
+        "  Auth      → {}",
+        if auth {
+            "token required"
+        } else {
+            "loopback only (no token)"
+        }
+    );
+
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await?;
 
     Ok(())
 }

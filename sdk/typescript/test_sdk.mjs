@@ -1,202 +1,217 @@
 /**
- * OculOS TypeScript SDK — integration test (runs as plain JS with Node 22+).
- * We import the .ts source directly won't work without tsx, so we inline the client logic.
+ * OculOS TypeScript SDK tests (Node 18+). Build first: `npm run build` (or `npm test`).
+ *
+ * Offline tests always run against a tiny in-process fake server. Live tests
+ * run only when an OculOS server is reachable at OCULOS_URL (default
+ * http://127.0.0.1:7878); set OCULOS_TOKEN if it requires a token.
  */
 
-const BASE = "http://127.0.0.1:7878";
+import http from "node:http";
+import assert from "node:assert/strict";
+import { OculOS, OculOSError, ELEMENT_TYPES } from "./dist/index.js";
 
-class OculOS {
-  constructor(baseUrl = BASE) {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
-  }
+const PNG = Buffer.from("\x89PNG\r\n\x1a\nfake", "latin1");
 
-  async listWindows() { return this._get("/windows"); }
-  async getTree(pid) { return this._get(`/windows/${pid}/tree`); }
-  async getTreeHwnd(hwnd) { return this._get(`/hwnd/${hwnd}/tree`); }
+// ── Fake server ──────────────────────────────────────────────────────────────
 
-  async findElements(pid, opts = {}) {
-    const p = new URLSearchParams();
-    if (opts.query) p.set("q", opts.query);
-    if (opts.type) p.set("type", opts.type);
-    if (opts.interactive !== undefined) p.set("interactive", String(opts.interactive));
-    const qs = p.toString();
-    return this._get(`/windows/${pid}/find${qs ? `?${qs}` : ""}`);
-  }
+const seen = [];
+function fakeServer() {
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      const u = new URL(req.url, "http://x");
+      const q = Object.fromEntries(u.searchParams);
+      const body = raw ? JSON.parse(raw) : undefined;
+      seen.push({ method: req.method, path: u.pathname, q, headers: req.headers, body });
+      const send = (status, obj, type = "application/json") => {
+        res.writeHead(status, { "content-type": type });
+        res.end(type === "application/json" ? JSON.stringify(obj) : obj);
+      };
+      const ok = (data) => send(200, { success: true, data, error: null });
+      const err = (s, code, error) => send(s, { success: false, data: null, error, code });
 
-  async findElementsHwnd(hwnd, opts = {}) {
-    const p = new URLSearchParams();
-    if (opts.query) p.set("q", opts.query);
-    if (opts.type) p.set("type", opts.type);
-    if (opts.interactive !== undefined) p.set("interactive", String(opts.interactive));
-    const qs = p.toString();
-    return this._get(`/hwnd/${hwnd}/find${qs ? `?${qs}` : ""}`);
-  }
-
-  async focusWindow(pid) { await this._post(`/windows/${pid}/focus`); }
-  async closeWindow(pid) { await this._post(`/windows/${pid}/close`); }
-  async click(id) { await this._post(`/interact/${id}/click`); }
-  async setText(id, text) { await this._post(`/interact/${id}/set-text`, { text }); }
-  async sendKeys(id, keys) { await this._post(`/interact/${id}/send-keys`, { keys }); }
-  async focus(id) { await this._post(`/interact/${id}/focus`); }
-  async toggle(id) { await this._post(`/interact/${id}/toggle`); }
-  async expand(id) { await this._post(`/interact/${id}/expand`); }
-  async collapse(id) { await this._post(`/interact/${id}/collapse`); }
-  async select(id) { await this._post(`/interact/${id}/select`); }
-  async setRange(id, value) { await this._post(`/interact/${id}/set-range`, { value }); }
-  async scroll(id, direction) { await this._post(`/interact/${id}/scroll`, { direction }); }
-  async scrollIntoView(id) { await this._post(`/interact/${id}/scroll-into-view`); }
-  async highlight(id, durationMs = 2000) { await this._post(`/interact/${id}/highlight`, { duration_ms: durationMs }); }
-  async health() { return this._get("/health"); }
-
-  async _get(path) {
-    const res = await fetch(`${this.baseUrl}${path}`);
-    const body = await res.json();
-    if (!body.success) throw new Error(body.error || `HTTP ${res.status}`);
-    return body.data;
-  }
-
-  async _post(path, json) {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: json ? { "Content-Type": "application/json" } : {},
-      body: json ? JSON.stringify(json) : undefined,
+      if (u.pathname === "/health") return ok({ status: "running", version: "0.2.0", auth_required: true });
+      if (u.pathname === "/slow") return setTimeout(() => ok(null), 500);
+      if (req.headers["x-oculos-token"] !== "t0k") return err(401, "unauthorized", "Missing or invalid API token.");
+      if (u.pathname === "/windows") return ok([{ pid: 1, hwnd: 2, title: "T", exe_name: "a.exe" }]);
+      if (u.pathname.endsWith("/wait")) {
+        if (q.q === "never") return err(408, "timeout", "No matching element appeared within 100ms");
+        return ok(q.until === "gone" ? [] : [{ oculos_id: "0123456789abcdef" }]);
+      }
+      if (u.pathname.endsWith("/screenshot")) return send(200, PNG, "image/png");
+      if (u.pathname === "/interact/batch") {
+        return ok(body.actions.map((a, index) => ({ index, action: a.action, element_id: a.element_id, success: true, error: null })));
+      }
+      if (u.pathname === "/interact/deadbeefdeadbeef/click") return err(404, "not_found", "Element not found");
+      if (u.pathname === "/html") return send(502, "<html>bad gateway</html>", "text/html");
+      return err(404, "not_found", "No such endpoint");
     });
-    const body = await res.json();
-    if (!body.success) throw new Error(body.error || `HTTP ${res.status}`);
-    return body.data;
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+}
+
+async function rejects(promise, check) {
+  try {
+    await promise;
+  } catch (e) {
+    assert.ok(e instanceof OculOSError, `expected OculOSError, got ${e}`);
+    check(e);
+    return;
+  }
+  assert.fail("expected rejection");
+}
+
+async function offline() {
+  const saved = process.env.OCULOS_TOKEN;
+  delete process.env.OCULOS_TOKEN;
+  try {
+    assert.equal(new OculOS().baseUrl, "http://127.0.0.1:7878");
+    assert.equal(new OculOS("http://h:1/").baseUrl, "http://h:1");
+    assert.ok(ELEMENT_TYPES.includes("SplitButton") && ELEMENT_TYPES.length === 41);
+
+    const server = await fakeServer();
+    const url = `http://127.0.0.1:${server.address().port}`;
+    try {
+      await rejects(new OculOS(url).listWindows(), (e) => {
+        assert.equal(e.code, "unauthorized");
+        assert.equal(e.status, 401);
+      });
+
+      process.env.OCULOS_TOKEN = "t0k"; // token from the environment
+      const client = new OculOS({ baseUrl: url, timeoutMs: 5000 });
+      delete process.env.OCULOS_TOKEN;
+      assert.equal((await client.health()).auth_required, true);
+      assert.equal((await client.listWindows())[0].exe_name, "a.exe");
+      assert.equal(seen.at(-1).headers["x-oculos-token"], "t0k");
+
+      // waitFor: params, hwnd, until=gone, timeout
+      const found = await client.waitFor({ pid: 1, query: "OK", type: "button", interactive: true, timeoutMs: 1234 });
+      assert.equal(found[0].oculos_id, "0123456789abcdef");
+      assert.equal(seen.at(-1).path, "/windows/1/wait");
+      assert.deepEqual(seen.at(-1).q, { q: "OK", type: "button", interactive: "true", timeout: "1234", until: "appears" });
+      assert.deepEqual(await client.waitFor({ hwnd: 2, query: "Saving", until: "gone" }), []);
+      assert.equal(seen.at(-1).path, "/hwnd/2/wait");
+      await rejects(client.waitFor({ pid: 1, query: "never", timeoutMs: 100 }), (e) => {
+        assert.equal(e.code, "timeout");
+        assert.equal(e.status, 408);
+      });
+      await rejects(client.waitFor({ query: "x" }), (e) => assert.equal(e.code, "invalid_input"));
+
+      // screenshots
+      const shot = await client.screenshot(1);
+      assert.ok(shot instanceof Uint8Array);
+      assert.deepEqual(Buffer.from(shot), PNG);
+      assert.deepEqual(Buffer.from(await client.screenshotElement("0123456789abcdef")), PNG);
+
+      // batch
+      const res = await client.batch([{ element_id: "0123456789abcdef", action: "click" }], { delayMs: 50 });
+      assert.equal(res[0].success, true);
+      assert.deepEqual(seen.at(-1).body, {
+        actions: [{ element_id: "0123456789abcdef", action: "click" }],
+        stop_on_error: true,
+        delay_ms: 50,
+      });
+      await client.batch([{ element_id: "0123456789abcdef", action: "focus" }], { stopOnError: false });
+      assert.equal(seen.at(-1).body.stop_on_error, false);
+
+      // errors
+      await rejects(client.click("deadbeefdeadbeef"), (e) => assert.equal(e.code, "not_found"));
+      await rejects(client.click("../windows/1/close"), (e) => assert.equal(e.code, "invalid_input"));
+      await rejects(client.request("GET", "/html"), (e) => {
+        assert.equal(e.status, 502);
+        assert.equal(e.code, undefined);
+      });
+      await rejects(new OculOS({ baseUrl: url, timeoutMs: 100 }).request("GET", "/slow"), (e) =>
+        assert.match(e.message, /timed out/),
+      );
+      await rejects(new OculOS("http://127.0.0.1:9").health(), (e) => assert.match(e.message, /Cannot reach/));
+    } finally {
+      server.close();
+    }
+  } finally {
+    if (saved !== undefined) process.env.OCULOS_TOKEN = saved;
   }
 }
 
-// ── Tests ──
+// ── Live tests (real server) ─────────────────────────────────────────────────
 
-let passed = 0;
-let failed = 0;
-
-function ok(name, msg) { console.log(`  ✓ ${name} — ${msg}`); passed++; }
-function fail(name, msg) { console.log(`  ✗ ${name} — ${msg}`); failed++; }
-
-async function run() {
-  console.log("OculOS TypeScript SDK Test\n");
-  const client = new OculOS();
-
-  // 1. health
-  try {
-    const h = await client.health();
-    if (h.status !== "running") throw new Error(`status=${h.status}`);
-    ok("health()", `status=${h.status}, version=${h.version}`);
-  } catch (e) { fail("health()", e.message); }
-
-  // 2. listWindows
-  let pid, hwnd;
-  try {
-    const wins = await client.listWindows();
-    if (!Array.isArray(wins) || wins.length === 0) throw new Error("empty");
-    pid = wins[0].pid;
-    hwnd = wins[0].hwnd;
-    ok("listWindows()", `${wins.length} windows`);
-  } catch (e) { fail("listWindows()", e.message); }
-
-  // 3. getTree
-  try {
-    const tree = await client.getTree(pid);
-    if (!tree.oculos_id) throw new Error("no oculos_id");
-    ok("getTree()", `root=${tree.type}, children=${tree.children.length}`);
-  } catch (e) { fail("getTree()", e.message); }
-
-  // 4. getTreeHwnd
-  try {
-    const tree2 = await client.getTreeHwnd(hwnd);
-    if (!tree2.oculos_id) throw new Error("no oculos_id");
-    ok("getTreeHwnd()", `root=${tree2.type}`);
-  } catch (e) { fail("getTreeHwnd()", e.message); }
-
-  // 5. findElements
-  try {
-    const elems = await client.findElements(pid);
-    if (!Array.isArray(elems)) throw new Error("not array");
-    ok("findElements()", `${elems.length} elements`);
-  } catch (e) { fail("findElements()", e.message); }
-
-  // 6. findElements interactive
-  try {
-    const elems = await client.findElements(pid, { interactive: true });
-    ok("findElements(interactive)", `${elems.length} interactive`);
-  } catch (e) { fail("findElements(interactive)", e.message); }
-
-  // 7. findElementsHwnd
-  try {
-    const elems = await client.findElementsHwnd(hwnd, { interactive: true });
-    ok("findElementsHwnd()", `${elems.length} interactive`);
-  } catch (e) { fail("findElementsHwnd()", e.message); }
-
-  // 8. focusWindow
-  try {
-    await client.focusWindow(pid);
-    ok("focusWindow()", "OK");
-  } catch (e) { fail("focusWindow()", e.message); }
-
-  // 9. click
-  try {
-    const btns = await client.findElements(pid, { type: "Button", interactive: true });
-    if (btns.length > 0) {
-      await client.click(btns[0].oculos_id);
-      ok("click()", `${btns[0].oculos_id.slice(0, 8)}... OK`);
-    } else {
-      ok("click()", "no buttons, skipped");
+async function live(client) {
+  let passed = 0;
+  let failed = 0;
+  const check = async (name, fn) => {
+    try {
+      const msg = await fn();
+      console.log(`  ✓ ${name}${msg ? ` — ${msg}` : ""}`);
+      passed++;
+    } catch (e) {
+      console.log(`  ✗ ${name} — ${e.message}`);
+      failed++;
     }
-  } catch (e) { fail("click()", e.message); }
+  };
 
-  // 10. focus element
-  try {
-    const elems = await client.findElements(pid, { interactive: true });
-    if (elems.length > 0) {
-      await client.focus(elems[0].oculos_id);
-      ok("focus()", `${elems[0].oculos_id.slice(0, 8)}... OK`);
-    } else {
-      ok("focus()", "skipped");
-    }
-  } catch (e) { fail("focus()", e.message); }
-
-  // 11. highlight
-  try {
-    const elems = await client.findElements(pid, { interactive: true });
-    if (elems.length > 0) {
-      await client.highlight(elems[0].oculos_id, 500);
-      ok("highlight()", `${elems[0].oculos_id.slice(0, 8)}... OK`);
-    } else {
-      ok("highlight()", "skipped");
-    }
-  } catch (e) { fail("highlight()", e.message); }
-
-  // 12. error handling
-  try {
-    await client.click("nonexistent-id-12345");
-    fail("error handling", "should have thrown");
-  } catch (e) {
-    if (e.message.includes("not found")) {
-      ok("error handling", `Error thrown: '${e.message.slice(0, 50)}...'`);
-    } else {
-      fail("error handling", `unexpected: ${e.message}`);
-    }
+  const wins = await client.listWindows();
+  if (!wins.length) {
+    console.log("  ⊘ no windows open — live element tests skipped");
+    return 0;
   }
-
-  // 13. bad URL
-  try {
-    const bad = new OculOS("http://127.0.0.1:9999");
-    await bad.health();
-    fail("bad URL", "should have thrown");
-  } catch (e) {
-    ok("bad URL", "connection error raised correctly");
-  }
-
-  // Summary
-  const total = passed + failed;
-  console.log(`\n${"=".repeat(40)}`);
-  console.log(`  TypeScript SDK: ${passed}/${total} passed`);
-  if (failed) console.log(`  ✗ ${failed} FAILED`);
-  else console.log(`  ✓ ALL PASSED`);
-  console.log("=".repeat(40));
-  process.exit(failed ? 1 : 0);
+  const { pid, hwnd } = wins[0];
+  await check("health()", async () => `auth_required=${(await client.health()).auth_required}`);
+  await check("getTree()", async () => `root=${(await client.getTree(pid)).type}`);
+  // HWND endpoints exist on Windows and macOS; Linux answers "unsupported".
+  const hwndCall = async (fn) => {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e.code === "unsupported") return "unsupported on this platform";
+      throw e;
+    }
+  };
+  await check("getTreeHwnd()", () => hwndCall(async () => `root=${(await client.getTreeHwnd(hwnd)).type}`));
+  await check("findElements(interactive)", async () => `${(await client.findElements(pid, { interactive: true })).length} elements`);
+  await check("findElementsHwnd()", () =>
+    hwndCall(async () => `${(await client.findElementsHwnd(hwnd, { interactive: true })).length} elements`),
+  );
+  await check("stable ids", async () => {
+    const a = (await client.findElements(pid, { interactive: true })).map((e) => e.oculos_id);
+    const b = (await client.findElements(pid, { interactive: true })).map((e) => e.oculos_id);
+    assert.deepEqual(a, b);
+    return `${a.length} ids stable`;
+  });
+  await check("waitFor(until=gone)", async () => {
+    assert.deepEqual(await client.waitFor({ pid, query: "no-such-element-xyz", until: "gone", timeoutMs: 1000 }), []);
+  });
+  await check("waitFor timeout", () =>
+    rejects(client.waitFor({ pid, query: "no-such-element-xyz", timeoutMs: 500 }), (e) => assert.equal(e.code, "timeout")),
+  );
+  await check("unknown type", () =>
+    rejects(client.findElements(pid, { type: "Buton" }), (e) => assert.equal(e.code, "invalid_input")),
+  );
+  await check("unknown id", () => rejects(client.click("ffffffffffffffff"), (e) => assert.equal(e.code, "not_found")));
+  await check("batch validation", () =>
+    rejects(client.batch([{ element_id: "ffffffffffffffff", action: "send-keys", keys: "{NOPE}" }]), (e) =>
+      assert.equal(e.code, "invalid_input"),
+    ),
+  );
+  console.log(`\n  live: ${passed}/${passed + failed} passed`);
+  return failed;
 }
 
-run();
+console.log("OculOS TypeScript SDK tests\n");
+try {
+  await offline();
+  console.log("  ✓ offline tests passed");
+} catch (e) {
+  console.log(`  ✗ offline tests failed — ${e.stack}`);
+  process.exit(1);
+}
+
+const client = new OculOS({ baseUrl: process.env.OCULOS_URL ?? "http://127.0.0.1:7878", timeoutMs: 10_000 });
+let reachable = true;
+try {
+  await client.health();
+} catch (e) {
+  reachable = false;
+  console.log(`  ⊘ live tests skipped — no server at ${client.baseUrl}`);
+}
+process.exit(reachable && (await live(client)) ? 1 : 0);

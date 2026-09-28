@@ -1,3 +1,4 @@
+use crate::keys::KeyStep;
 use crate::types::{ElementType, Rect, UiElement, WindowInfo};
 use anyhow::Result;
 
@@ -5,6 +6,14 @@ use anyhow::Result;
 ///
 /// Every OS implements this trait. OculOS never touches platform-specific code
 /// outside these implementations.
+///
+/// Conventions for implementors:
+/// - `oculos_id`s are derived from a stable element identity via
+///   [`crate::registry::stable_id`] and stored in an
+///   [`crate::registry::ElementRegistry`], so the same element keeps its id.
+/// - Errors callers can act on are created with the helpers in
+///   [`crate::error`] (`element_not_found`, `unsupported`, `invalid_input`…).
+///   Never report success for an action that did not happen.
 pub trait UiBackend: Send + Sync {
     // ── Discovery ──────────────────────────────────────────────────────────
 
@@ -43,9 +52,9 @@ pub trait UiBackend: Send + Sync {
     /// Set value via the ValuePattern (direct, no keyboard simulation).
     fn set_text(&self, oculos_id: &str, text: &str) -> Result<()>;
 
-    /// Simulate keyboard input to a focused element (fallback for
-    /// elements that don't support ValuePattern, e.g. password boxes).
-    fn send_keys(&self, oculos_id: &str, text: &str) -> Result<()>;
+    /// Focus the element, then simulate keyboard input. `steps` comes from
+    /// [`crate::keys::parse`], so it is already validated.
+    fn send_keys(&self, oculos_id: &str, steps: &[KeyStep]) -> Result<()>;
 
     /// Move keyboard focus to this element.
     fn focus_element(&self, oculos_id: &str) -> Result<()>;
@@ -88,7 +97,9 @@ pub trait UiBackend: Send + Sync {
     /// Duration in milliseconds. Default no-op for unsupported platforms.
     fn highlight_element(&self, oculos_id: &str, duration_ms: u64) -> Result<Rect> {
         let _ = (oculos_id, duration_ms);
-        Err(anyhow::anyhow!("Highlight not supported on this platform"))
+        Err(crate::error::unsupported(
+            "Highlight is not supported on this platform",
+        ))
     }
 
     // ── Screenshot ─────────────────────────────────────────────────────
@@ -96,13 +107,17 @@ pub trait UiBackend: Send + Sync {
     /// Capture a screenshot of the window identified by PID. Returns PNG bytes.
     fn screenshot_window(&self, pid: u32) -> Result<Vec<u8>> {
         let _ = pid;
-        Err(anyhow::anyhow!("Screenshot not supported on this platform"))
+        Err(crate::error::unsupported(
+            "Screenshots are not supported on this platform",
+        ))
     }
 
     /// Capture a screenshot of a specific element by its oculos_id. Returns PNG bytes.
     fn screenshot_element(&self, oculos_id: &str) -> Result<Vec<u8>> {
         let _ = oculos_id;
-        Err(anyhow::anyhow!("Screenshot not supported on this platform"))
+        Err(crate::error::unsupported(
+            "Element screenshots are not supported on this platform",
+        ))
     }
 }
 

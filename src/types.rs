@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 // ── Geometry ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -24,11 +24,12 @@ pub struct WindowInfo {
 
 // ── Element type ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "PascalCase")]
 pub enum ElementType {
     Window,
     Button,
+    SplitButton,
     Edit,
     Text,
     CheckBox,
@@ -39,6 +40,7 @@ pub enum ElementType {
     TreeView,
     TreeItem,
     Menu,
+    MenuBar,
     MenuItem,
     TabControl,
     TabItem,
@@ -46,6 +48,7 @@ pub enum ElementType {
     StatusBar,
     ScrollBar,
     Slider,
+    Spinner,
     ProgressBar,
     Image,
     Link,
@@ -55,8 +58,14 @@ pub enum ElementType {
     Document,
     DataGrid,
     DataItem,
+    Header,
     HeaderItem,
     Table,
+    TitleBar,
+    ToolTip,
+    Separator,
+    Calendar,
+    Thumb,
     Custom,
     Unknown,
 }
@@ -153,6 +162,7 @@ pub struct UiElement {
     ///   "collapse"         → POST /interact/{id}/collapse
     ///   "select"           → POST /interact/{id}/select
     ///   "set-range"        → POST /interact/{id}/set-range
+    ///   "scroll"           → POST /interact/{id}/scroll
     ///   "scroll-into-view" → POST /interact/{id}/scroll-into-view
     ///   "focus"            → POST /interact/{id}/focus
     pub actions: Vec<String>,
@@ -170,7 +180,7 @@ pub struct SetTextPayload {
 
 #[derive(Debug, Deserialize)]
 pub struct SendKeysPayload {
-    /// Text to type into the focused element character by character.
+    /// Text and `{KEY}` sequences to type into the element (see `keys.rs`).
     pub keys: String,
 }
 
@@ -197,39 +207,173 @@ fn default_highlight_duration() -> u64 {
 
 // ── ElementType helpers ───────────────────────────────────────────────────────
 
-impl From<&str> for ElementType {
-    fn from(s: &str) -> Self {
-        match s {
-            "Button" => ElementType::Button,
-            "Edit" => ElementType::Edit,
-            "Text" => ElementType::Text,
-            "CheckBox" => ElementType::CheckBox,
-            "RadioButton" => ElementType::RadioButton,
-            "ComboBox" => ElementType::ComboBox,
-            "ListBox" => ElementType::ListBox,
-            "ListItem" => ElementType::ListItem,
-            "TreeItem" => ElementType::TreeItem,
-            "Menu" => ElementType::Menu,
-            "MenuItem" => ElementType::MenuItem,
-            "TabItem" => ElementType::TabItem,
-            "ToolBar" => ElementType::ToolBar,
-            "StatusBar" => ElementType::StatusBar,
-            "ScrollBar" => ElementType::ScrollBar,
-            "Slider" => ElementType::Slider,
-            "ProgressBar" => ElementType::ProgressBar,
-            "Image" => ElementType::Image,
-            "Link" => ElementType::Link,
-            "Group" => ElementType::Group,
-            "Pane" => ElementType::Pane,
-            "Dialog" => ElementType::Dialog,
-            "Document" => ElementType::Document,
-            "DataGrid" => ElementType::DataGrid,
-            "DataItem" => ElementType::DataItem,
-            "Table" => ElementType::Table,
-            "Window" => ElementType::Window,
-            "Custom" => ElementType::Custom,
-            _ => ElementType::Unknown,
+impl ElementType {
+    /// Every variant, in declaration order.
+    pub const ALL: &'static [ElementType] = &[
+        ElementType::Window,
+        ElementType::Button,
+        ElementType::SplitButton,
+        ElementType::Edit,
+        ElementType::Text,
+        ElementType::CheckBox,
+        ElementType::RadioButton,
+        ElementType::ComboBox,
+        ElementType::ListBox,
+        ElementType::ListItem,
+        ElementType::TreeView,
+        ElementType::TreeItem,
+        ElementType::Menu,
+        ElementType::MenuBar,
+        ElementType::MenuItem,
+        ElementType::TabControl,
+        ElementType::TabItem,
+        ElementType::ToolBar,
+        ElementType::StatusBar,
+        ElementType::ScrollBar,
+        ElementType::Slider,
+        ElementType::Spinner,
+        ElementType::ProgressBar,
+        ElementType::Image,
+        ElementType::Link,
+        ElementType::Group,
+        ElementType::Pane,
+        ElementType::Dialog,
+        ElementType::Document,
+        ElementType::DataGrid,
+        ElementType::DataItem,
+        ElementType::Header,
+        ElementType::HeaderItem,
+        ElementType::Table,
+        ElementType::TitleBar,
+        ElementType::ToolTip,
+        ElementType::Separator,
+        ElementType::Calendar,
+        ElementType::Thumb,
+        ElementType::Custom,
+        ElementType::Unknown,
+    ];
+
+    /// The canonical (serialized) name, e.g. `"CheckBox"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ElementType::Window => "Window",
+            ElementType::Button => "Button",
+            ElementType::SplitButton => "SplitButton",
+            ElementType::Edit => "Edit",
+            ElementType::Text => "Text",
+            ElementType::CheckBox => "CheckBox",
+            ElementType::RadioButton => "RadioButton",
+            ElementType::ComboBox => "ComboBox",
+            ElementType::ListBox => "ListBox",
+            ElementType::ListItem => "ListItem",
+            ElementType::TreeView => "TreeView",
+            ElementType::TreeItem => "TreeItem",
+            ElementType::Menu => "Menu",
+            ElementType::MenuBar => "MenuBar",
+            ElementType::MenuItem => "MenuItem",
+            ElementType::TabControl => "TabControl",
+            ElementType::TabItem => "TabItem",
+            ElementType::ToolBar => "ToolBar",
+            ElementType::StatusBar => "StatusBar",
+            ElementType::ScrollBar => "ScrollBar",
+            ElementType::Slider => "Slider",
+            ElementType::Spinner => "Spinner",
+            ElementType::ProgressBar => "ProgressBar",
+            ElementType::Image => "Image",
+            ElementType::Link => "Link",
+            ElementType::Group => "Group",
+            ElementType::Pane => "Pane",
+            ElementType::Dialog => "Dialog",
+            ElementType::Document => "Document",
+            ElementType::DataGrid => "DataGrid",
+            ElementType::DataItem => "DataItem",
+            ElementType::Header => "Header",
+            ElementType::HeaderItem => "HeaderItem",
+            ElementType::Table => "Table",
+            ElementType::TitleBar => "TitleBar",
+            ElementType::ToolTip => "ToolTip",
+            ElementType::Separator => "Separator",
+            ElementType::Calendar => "Calendar",
+            ElementType::Thumb => "Thumb",
+            ElementType::Custom => "Custom",
+            ElementType::Unknown => "Unknown",
         }
+    }
+
+    /// Comma-separated list of every accepted type name (for error messages / schemas).
+    pub fn all_names() -> String {
+        Self::ALL
+            .iter()
+            .map(|t| t.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+impl std::str::FromStr for ElementType {
+    type Err = anyhow::Error;
+
+    /// Case-insensitive; also accepts a few common aliases (Hyperlink, List, Tree, Tab…).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let wanted = s.trim();
+        if let Some(t) = Self::ALL
+            .iter()
+            .find(|t| t.name().eq_ignore_ascii_case(wanted))
+        {
+            return Ok(*t);
+        }
+        let alias = match wanted.to_ascii_lowercase().as_str() {
+            "hyperlink" => Some(ElementType::Link),
+            "list" => Some(ElementType::ListBox),
+            "tree" => Some(ElementType::TreeView),
+            "tab" => Some(ElementType::TabControl),
+            "textbox" | "textfield" | "input" => Some(ElementType::Edit),
+            "checkbutton" => Some(ElementType::CheckBox),
+            "label" | "statictext" => Some(ElementType::Text),
+            "spinbutton" => Some(ElementType::Spinner),
+            _ => None,
+        };
+        alias.ok_or_else(|| {
+            crate::error::invalid_input(format!(
+                "Unknown element type '{wanted}'. Valid types: {}",
+                Self::all_names()
+            ))
+        })
+    }
+}
+
+impl UiElement {
+    /// A new element with the given id/type and neutral defaults
+    /// (enabled, no state, no actions, no children).
+    pub fn new(oculos_id: String, element_type: ElementType) -> Self {
+        Self {
+            oculos_id,
+            element_type,
+            label: String::new(),
+            value: None,
+            text_content: None,
+            rect: Rect::default(),
+            enabled: true,
+            focused: false,
+            is_keyboard_focusable: false,
+            toggle_state: None,
+            is_selected: None,
+            expand_state: None,
+            range: None,
+            automation_id: None,
+            class_name: None,
+            help_text: None,
+            keyboard_shortcut: None,
+            actions: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+
+    /// Stand-in node returned when the depth limit is reached.
+    pub fn depth_limit_placeholder(oculos_id: String) -> Self {
+        let mut e = Self::new(oculos_id, ElementType::Unknown);
+        e.enabled = false;
+        e
     }
 }
 
@@ -240,6 +384,10 @@ pub struct ApiResponse<T: Serialize> {
     pub success: bool,
     pub data: Option<T>,
     pub error: Option<String>,
+    /// Machine-readable error kind (`not_found`, `invalid_input`, `unsupported`,
+    /// `timeout`, `permission_denied`, `forbidden`, `unauthorized`, `internal`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<&'static str>,
 }
 
 impl<T: Serialize> ApiResponse<T> {
@@ -248,16 +396,49 @@ impl<T: Serialize> ApiResponse<T> {
             success: true,
             data: Some(data),
             error: None,
+            code: None,
         }
     }
 }
 
 impl ApiResponse<()> {
-    pub fn err(msg: impl Into<String>) -> Self {
+    pub fn err(code: &'static str, msg: impl Into<String>) -> Self {
         Self {
             success: false,
             data: None,
             error: Some(msg.into()),
+            code: Some(code),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_type_parsing_is_case_insensitive_and_complete() {
+        for t in ElementType::ALL {
+            assert_eq!(t.name().parse::<ElementType>().unwrap(), *t);
+            assert_eq!(t.name().to_lowercase().parse::<ElementType>().unwrap(), *t);
+            // serde name must match the canonical name
+            assert_eq!(
+                serde_json::to_value(t).unwrap(),
+                serde_json::Value::String(t.name().to_string())
+            );
+        }
+        assert_eq!(
+            "hyperlink".parse::<ElementType>().unwrap(),
+            ElementType::Link
+        );
+    }
+
+    #[test]
+    fn unknown_element_type_is_an_error() {
+        let err = "Buton".parse::<ElementType>().unwrap_err();
+        assert_eq!(
+            crate::error::kind_of(&err),
+            Some(crate::error::ErrorKind::InvalidInput)
+        );
     }
 }

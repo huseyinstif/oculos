@@ -1,12 +1,21 @@
 {
   "name": "oculos-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript SDK for OculOS — control any desktop app through JSON",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node test_sdk.mjs",
     "prepublishOnly": "tsc"
   },
   "keywords": ["ui-automation", "accessibility", "desktop", "api", "mcp", "oculos"],

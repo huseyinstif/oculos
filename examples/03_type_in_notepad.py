@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sdk", "python"
 
 from oculos import OculOS
 
-client = OculOS()
+client = OculOS()  # token from $OCULOS_TOKEN if the server needs one
 
 # Find Notepad window
 windows = client.list_windows()
@@ -30,8 +30,11 @@ if not editors:
     sys.exit(1)
 
 editor = editors[0]
-print(f"Found editor: type={editor['type']} (id: {editor['oculos_id'][:8]}...)")
+print(f"Found editor: type={editor['type']} (id: {editor['oculos_id']})")
 
-# Type some text
+# Replace the content, then append a line with keyboard input.
+# send-keys syntax: {ENTER}, {TAB 3} (repeat), {CTRL+SHIFT+T} (chords),
+# {MOD+A} (Cmd on macOS, Ctrl elsewhere), {{ and }} for literal braces.
 client.set_text(editor["oculos_id"], "Hello from OculOS! 🚀")
+client.send_keys(editor["oculos_id"], "{CTRL+END}{ENTER}{{braces}} and a tab:{TAB}done")
 print("Text set!")

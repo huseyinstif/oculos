@@ -1,6 +1,6 @@
 [package]
 name = "oculos"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["OculOS Contributors"]
 description = "If it's on the screen, it's an API. Universal UI automation layer for any application."
@@ -8,9 +8,6 @@ license = "MIT"
 repository = "https://github.com/huseyinstif/oculos"
 keywords = ["ui-automation", "accessibility", "api", "automation", "gui"]
 categories = ["gui", "api-bindings", "development-tools"]
-
-[features]
-default = []
 
 [[bin]]
 name = "oculos"
@@ -21,8 +18,7 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["full"] }
 
 # Web framework
-axum = { version = "0.7", features = ["ws", "multipart"] }
-tower = "0.4"
+axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
 
 # Serialization
@@ -35,26 +31,27 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
 
-# Unique IDs for UI elements
+# Random API tokens
 uuid = { version = "1", features = ["v4"] }
 
-# Async channels & state
-tokio-stream = "0.1"
+# Element registry
 dashmap = "5"
 
 # CLI args
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Lazy statics
 once_cell = "1"
 
 # Image encoding (PNG screenshots)
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
-# HTTP client (for dashboard live reload dev)
-reqwest = { version = "0.11", features = ["json"], optional = true }
+# Base64 (MCP image content)
+base64 = "0.22"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
@@ -65,11 +62,17 @@ windows = { version = "0.58", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_System_Threading",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
     "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_UI_HiDpi",
+    "Win32_Storage_Xps",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 accessibility = "0.1"
+accessibility-sys = "0.1"
 core-foundation = "0.9"
 core-graphics = { version = "0.23", features = ["highsierra"] }
 objc2 = "0.5"
@@ -77,6 +80,7 @@ objc2 = "0.5"
 [target.'cfg(target_os = "linux")'.dependencies]
 atspi = { version = "0.19", features = ["async-std"] }
 zbus = "3"
+futures-util = "0.3"
 
 [profile.release]
 opt-level = 3

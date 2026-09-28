@@ -3,9 +3,9 @@
 import sys, os, time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sdk", "python"))
 
-from oculos import OculOS
+from oculos import OculOS, OculOSError
 
-client = OculOS()
+client = OculOS()  # token from $OCULOS_TOKEN if the server needs one
 
 # Use the first window
 windows = client.list_windows()
@@ -27,8 +27,8 @@ for i, btn in enumerate(buttons[:10]):  # limit to 10
     print(f"  [{i+1}] Highlighting: {label}")
     try:
         client.highlight(btn["oculos_id"], duration_ms=800)
-    except Exception as e:
-        print(f"      skip — {e}")
+    except OculOSError as e:
+        print(f"      skip — {e}")  # e.g. [unsupported] on platforms without an overlay
     time.sleep(1)
 
 print("\nDone!")
