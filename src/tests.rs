@@ -258,7 +258,7 @@ impl Req {
         self
     }
 
-    fn from_peer(mut self, addr: &str) -> Self {
+    fn with_peer(mut self, addr: &str) -> Self {
         self.peer = Some(addr.parse().unwrap());
         self
     }
@@ -410,14 +410,14 @@ async fn token_is_enforced_when_configured() {
     assert_eq!(body["data"]["auth_required"], true);
 
     // The dashboard page is public; only local clients get the token.
-    let (status, html) = get("/").from_peer("127.0.0.1:50000").send_raw(&app).await;
+    let (status, html) = get("/").with_peer("127.0.0.1:50000").send_raw(&app).await;
     assert_eq!(status, StatusCode::OK);
     let html = String::from_utf8(html).unwrap();
     assert!(html.contains(r#"<meta name="oculos-token" content="s3cret">"#));
 
     let (_, html) = get("/")
         .header("host", "192.168.1.5:7878")
-        .from_peer("192.168.1.9:50000")
+        .with_peer("192.168.1.9:50000")
         .send_raw(&app)
         .await;
     let html = String::from_utf8(html).unwrap();
